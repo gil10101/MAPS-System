@@ -1,37 +1,51 @@
 /* ==========================================================================
    MAPS — Medical Appointment & Patient Scheduling System
-   Clean, minimal system: white backgrounds, one green accent, no gradients,
-   few borders, soft shadows, Lucide icons, spacing on a 4px grid.
-   Self-contained (no external fonts/CDNs).
+   Dark-shell layout: sidebar + page background share one navy color; the main
+   content floats as a white rounded panel inset from the viewport edges.
+   Blue accent, green reserved for success states, red for destructive.
+   Lucide icons, spacing on a 4px grid. Self-contained (no external CDNs).
    ========================================================================== */
 
 :root {
-  /* Single accent — green */
-  --brand:      #1f7a5c;
-  --brand-dark: #175f47;
-  --brand-soft: #eaf3ee;
-  --brand-ring: rgba(31, 122, 92, .16);
+  /* Shell */
+  --navy:        #0f1d33;             /* sidebar + app background */
+  --navy-soft:   rgba(255, 255, 255, .08);
+  --navy-line:   rgba(255, 255, 255, .10);
+  --on-navy:     rgba(255, 255, 255, .72);
+  --on-navy-dim: rgba(255, 255, 255, .42);
+  --shell-gap:   2px;                 /* gap between white panel and viewport */
+  --shell-radius: 14px;
+
+  /* Accent — blue */
+  --brand:      #1d6ff2;
+  --brand-dark: #1558c9;
+  --brand-soft: #e8f0fe;
+  --brand-ring: rgba(29, 111, 242, .18);
 
   /* Neutrals */
-  --ink:    #1a2420;
-  --slate:  #58635d;
-  --muted:  #97a09b;
-  --line:   #edefee;   /* hairline — used sparingly */
+  --ink:    #1a2430;
+  --slate:  #58636e;
+  --muted:  #97a0a9;
+  --line:   #edeff1;   /* hairline — used sparingly */
   --bg:     #ffffff;
   --card:   #ffffff;
-  --fill:   #f5f7f6;   /* subtle input / secondary fill */
+  --fill:   #f4f6f8;   /* subtle input / secondary fill */
 
-  /* Functional only (errors / destructive) */
-  --red:    #c0392b;
-  --red-soft: #fdecea;
+  /* Status (semantic only) */
+  --green:      #1f9d55;
+  --green-soft: #e6f6ec;
+  --amber:      #b7791f;
+  --amber-soft: #fdf3df;
+  --red:        #c0392b;
+  --red-soft:   #fdecea;
 
   /* Radii on the 4px grid */
   --radius:    12px;
   --radius-sm: 8px;
 
   /* Soft shadows replace borders for card separation */
-  --shadow-sm: 0 1px 2px rgba(20, 30, 25, .06);
-  --shadow:    0 1px 2px rgba(20, 30, 25, .04), 0 4px 14px rgba(20, 30, 25, .05);
+  --shadow-sm: 0 1px 2px rgba(20, 28, 40, .06);
+  --shadow:    0 1px 2px rgba(20, 28, 40, .04), 0 4px 14px rgba(20, 28, 40, .05);
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
@@ -66,37 +80,52 @@ p  { margin: 0 0 16px; }
 .lucide.lg { width: 32px; height: 32px; }
 .in-btn { margin-right: 4px; }
 
-/* ---------- App shell (sidebar layout) ---------- */
-body.has-sidebar { display: flex; min-height: 100vh; }
+/* ---------- App shell (dark background, floating white panel) ---------- */
+body.has-sidebar {
+  display: flex; height: 100vh; overflow: hidden;
+  background: var(--navy);
+}
 #navbar { display: contents; }
 
+body.has-sidebar .page {
+  flex: 1; min-width: 0;
+  background: var(--card);
+  border-radius: var(--shell-radius);
+  margin: var(--shell-gap);
+  overflow-y: auto;
+}
+
+/* ---------- Sidebar (sits directly on the navy background) ---------- */
 .sidebar {
-  width: 248px; flex: none; background: var(--card);
-  border-right: 1px solid var(--line);
-  position: sticky; top: 0; height: 100vh;
+  width: 248px; flex: none;
+  background: transparent;
+  height: 100vh;
   display: flex; flex-direction: column; padding: 20px 12px;
 }
-.sidebar .brand { margin: 4px 8px 24px; }
+.sidebar .brand { margin: 4px 8px 24px; color: #fff; }
+.sidebar .brand b { color: #7fb3ff; }
 .side-nav { flex: 1; overflow-y: auto; }
 .side-group { margin-bottom: 24px; }
 .side-section {
   font-size: .68rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .06em; color: var(--muted); padding: 0 12px 8px;
+  letter-spacing: .06em; color: var(--on-navy-dim); padding: 0 12px 8px;
 }
 .side-link {
   display: flex; align-items: center; gap: 12px;
   padding: 8px 12px; border-radius: var(--radius-sm);
-  color: var(--slate); font-size: .93rem; font-weight: 500; margin-bottom: 2px;
+  color: var(--on-navy); font-size: .93rem; font-weight: 500; margin-bottom: 2px;
 }
-.side-link:hover { background: var(--fill); color: var(--ink); text-decoration: none; }
-.side-link.active { background: var(--brand-soft); color: var(--brand-dark); font-weight: 600; }
+.side-link:hover { background: var(--navy-soft); color: #fff; text-decoration: none; }
+.side-link.active { background: rgba(255, 255, 255, .14); color: #fff; font-weight: 600; }
 .side-link .lucide { width: 18px; height: 18px; }
 
-.side-foot { border-top: 1px solid var(--line); padding-top: 16px; }
+.side-foot { border-top: 1px solid var(--navy-line); padding-top: 16px; }
 .side-user { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 0 4px; }
 .side-user-meta { display: flex; flex-direction: column; min-width: 0; }
-.side-user-meta .name { font-size: .88rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.side-user-meta .role { font-size: .76rem; color: var(--muted); }
+.side-user-meta .name { font-size: .88rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-user-meta .role { font-size: .76rem; color: var(--on-navy-dim); }
+.sidebar .btn.secondary { background: var(--navy-soft); color: #fff; }
+.sidebar .btn.secondary:hover { background: rgba(255, 255, 255, .14); }
 
 /* ---------- Brand (wordmark, no icon) ---------- */
 .brand {
@@ -136,7 +165,7 @@ body.has-sidebar .page .container { max-width: 1100px; }
 .card-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .card-title h2, .card-title h3 { margin: 0; }
 
-/* ---------- Buttons (flat, minimal borders) ---------- */
+/* ---------- Buttons (flat) ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   border: none; border-radius: var(--radius-sm);
@@ -148,7 +177,7 @@ body.has-sidebar .page .container { max-width: 1100px; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.secondary { background: var(--fill); color: var(--ink); }
-.btn.secondary:hover { background: #e9ecea; }
+.btn.secondary:hover { background: #e8ebee; }
 .btn.ghost { background: transparent; color: var(--brand); }
 .btn.ghost:hover { background: var(--brand-soft); }
 .btn.danger { background: var(--red-soft); color: var(--red); }
@@ -174,15 +203,15 @@ textarea { resize: vertical; min-height: 88px; }
 .field-row > * { flex: 1; }
 @media (max-width: 560px) { .field-row { flex-direction: column; gap: 0; } }
 
-/* ---------- Badges (green + neutral only) ---------- */
+/* ---------- Badges (semantic status colors) ---------- */
 .badge {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 8px; border-radius: 999px; font-size: .74rem; font-weight: 700;
   text-transform: capitalize;
 }
-.badge.completed { background: var(--brand); color: #fff; }
-.badge.confirmed { background: var(--brand-soft); color: var(--brand-dark); }
-.badge.pending   { background: var(--fill); color: var(--slate); }
+.badge.pending   { background: var(--amber-soft); color: var(--amber); }
+.badge.confirmed { background: var(--brand-soft); color: var(--brand); }
+.badge.completed { background: var(--green-soft); color: var(--green); }
 .badge.cancelled { background: var(--fill); color: var(--muted); }
 
 /* ---------- Tables ---------- */
@@ -202,10 +231,11 @@ tbody tr:hover { background: var(--fill); }
 /* ---------- Avatars & doctor cards ---------- */
 .avatar {
   width: 44px; height: 44px; border-radius: 50%; flex: none;
-  background: var(--brand); color: #fff;
+  background: var(--navy); color: #fff;
   display: grid; place-items: center; font-weight: 700; font-size: 1rem;
 }
 .avatar.sm { width: 32px; height: 32px; font-size: .82rem; }
+.sidebar .avatar { background: var(--navy-soft); }
 .doctor-card { display: flex; flex-direction: column; gap: 12px; }
 .doctor-head { display: flex; align-items: center; gap: 12px; }
 .doctor-card .bio { color: var(--slate); font-size: .88rem; }
@@ -222,8 +252,8 @@ tbody tr:hover { background: var(--fill); }
 
 /* ---------- Alerts / toast ---------- */
 .alert { padding: 12px 16px; border-radius: var(--radius-sm); font-size: .9rem; margin-bottom: 16px; }
-.alert.error   { background: var(--red-soft);  color: var(--red); }
-.alert.success { background: var(--brand-soft); color: var(--brand-dark); }
+.alert.error   { background: var(--red-soft);   color: var(--red); }
+.alert.success { background: var(--green-soft); color: var(--green); }
 .alert.info    { background: var(--brand-soft); color: var(--brand-dark); }
 .alert code { background: rgba(0, 0, 0, .05); padding: 1px 4px; border-radius: 4px; }
 
@@ -232,11 +262,11 @@ tbody tr:hover { background: var(--fill); }
   display: flex; flex-direction: column; gap: 8px; max-width: 340px;
 }
 .toast {
-  background: var(--ink); color: #fff; padding: 12px 16px; border-radius: var(--radius-sm);
+  background: var(--navy); color: #fff; padding: 12px 16px; border-radius: var(--radius-sm);
   box-shadow: var(--shadow); font-size: .9rem; animation: slidein .2s ease;
 }
 .toast.error   { background: var(--red); }
-.toast.success { background: var(--brand); }
+.toast.success { background: var(--green); }
 @keyframes slidein { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ---------- Empty state ---------- */
@@ -245,7 +275,7 @@ tbody tr:hover { background: var(--fill); }
 
 /* ---------- Modal ---------- */
 .modal-backdrop {
-  position: fixed; inset: 0; background: rgba(24, 40, 33, .4);
+  position: fixed; inset: 0; background: rgba(15, 29, 51, .5);
   display: none; align-items: center; justify-content: center; z-index: 90; padding: 16px;
   backdrop-filter: blur(2px);
 }
