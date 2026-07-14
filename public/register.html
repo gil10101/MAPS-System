@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create account — MAPS</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card" style="max-width: 520px;">
+      <div class="auth-logo">
+        <a class="brand" href="/"><span class="logo">M+</span> MAPS</a>
+      </div>
+      <div class="card">
+        <h1 class="center">Create your patient account</h1>
+        <p class="center muted small">It only takes a minute.</p>
+
+        <div id="alert"></div>
+
+        <form id="register-form" novalidate>
+          <div class="field">
+            <label for="full_name">Full name *</label>
+            <input class="input" id="full_name" required />
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="email">Email *</label>
+              <input class="input" type="email" id="email" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label for="password">Password *</label>
+              <input class="input" type="password" id="password" autocomplete="new-password" required />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="date_of_birth">Date of birth</label>
+              <input class="input" type="date" id="date_of_birth" />
+            </div>
+            <div class="field">
+              <label for="phone">Phone</label>
+              <input class="input" type="tel" id="phone" placeholder="e.g. 917-555-0100" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="gender">Gender</label>
+              <select id="gender">
+                <option value="">Prefer not to say</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="insurance_provider">Insurance provider</label>
+              <input class="input" id="insurance_provider" placeholder="e.g. BlueCross" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="address">Address</label>
+            <input class="input" id="address" />
+          </div>
+          <button class="btn block" type="submit" id="submit">Create account</button>
+        </form>
+
+        <p class="center small" style="margin-top: 1.25rem;">
+          Already have an account? <a href="/login.html">Log in</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const existing = MAPS.getUser();
+    if (existing && MAPS.getToken()) window.location.href = MAPS.homeFor(existing);
+
+    const form = document.getElementById('register-form');
+    const alertBox = document.getElementById('alert');
+    const btn = document.getElementById('submit');
+    const val = (id) => document.getElementById(id).value.trim();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      alertBox.innerHTML = '';
+      btn.disabled = true;
+      btn.textContent = 'Creating…';
+      try {
+        const data = await MAPS.api('/auth/register', {
+          method: 'POST',
+          auth: false,
+          body: {
+            full_name: val('full_name'),
+            email: val('email'),
+            password: document.getElementById('password').value,
+            date_of_birth: val('date_of_birth') || null,
+            phone: val('phone') || null,
+            gender: val('gender') || null,
+            insurance_provider: val('insurance_provider') || null,
+            address: val('address') || null,
+          },
+        });
+        MAPS.setSession(data.token, data.user);
+        window.location.href = MAPS.homeFor(data.user);
+      } catch (err) {
+        alertBox.innerHTML = `<div class="alert error">${MAPS.escapeHtml(err.message)}</div>`;
+        btn.disabled = false;
+        btn.textContent = 'Create account';
+      }
+    });
+  </script>
+</body>
+</html>

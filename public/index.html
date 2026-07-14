@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MAPS — Medical Appointment & Patient Scheduling</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="inner">
+      <a class="brand" href="/"><span class="logo">M+</span> MAPS</a>
+      <div class="nav-links">
+        <a href="/login.html">Log in</a>
+        <a href="/register.html" class="btn sm">Get started</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero container">
+      <h1>Book your care in minutes, not phone calls.</h1>
+      <p class="lead">
+        MAPS is a scheduling platform for outpatient clinics. Patients find the
+        right doctor and book online; clinic staff manage schedules, approvals,
+        and reporting — all in one place.
+      </p>
+      <div class="cta">
+        <a href="/register.html" class="btn">Create a patient account</a>
+        <a href="/login.html" class="btn secondary">Log in</a>
+      </div>
+    </section>
+
+    <section class="container" style="padding-bottom: 3rem;">
+      <div class="grid cols-3">
+        <div class="card feature">
+          <div class="ico">🔍</div>
+          <h3>Find the right doctor</h3>
+          <p class="muted">Search by name or specialty and see real-time availability before you book.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico">📅</div>
+          <h3>Book &amp; manage online</h3>
+          <p class="muted">Pick an open time slot, review your appointment history, and cancel when plans change.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico">🚫</div>
+          <h3>No double-booking</h3>
+          <p class="muted">Slots update instantly so two patients can never claim the same time with a physician.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico">🩺</div>
+          <h3>Clinic administration</h3>
+          <p class="muted">Staff manage physician schedules and approve or cancel appointments with ease.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico">📊</div>
+          <h3>Operational reports</h3>
+          <p class="muted">Track appointment volume, physician utilization, and cancellation rates.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico">🔒</div>
+          <h3>Secure accounts</h3>
+          <p class="muted">Passwords are hashed and every action is scoped to your role.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="container">
+      MAPS — Medical Appointment &amp; Patient Scheduling System · CIS 9590 Group Project
+    </div>
+  </footer>
+
+  <script src="/js/api.js"></script>
+  <script>
+    // If already logged in, jump straight to the right home.
+    const u = MAPS.getUser();
+    if (u && MAPS.getToken()) window.location.href = MAPS.homeFor(u);
+  </script>
+</body>
+</html>

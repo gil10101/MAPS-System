@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profile — MAPS</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="navbar"></div>
+
+  <main class="page">
+    <div class="container stack" style="max-width:640px;">
+      <div>
+        <h1>My profile</h1>
+        <p class="muted" style="margin:0;">Keep your contact and insurance details up to date.</p>
+      </div>
+
+      <div class="card">
+        <div id="alert"></div>
+        <form id="profile-form">
+          <div class="field">
+            <label for="full_name">Full name</label>
+            <input class="input" id="full_name" />
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input class="input" id="email" disabled />
+            <span class="muted small">Email is used for login and can't be changed here.</span>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="date_of_birth">Date of birth</label>
+              <input class="input" type="date" id="date_of_birth" />
+            </div>
+            <div class="field">
+              <label for="phone">Phone</label>
+              <input class="input" type="tel" id="phone" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="gender">Gender</label>
+              <select id="gender">
+                <option value="">Prefer not to say</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="insurance_provider">Insurance provider</label>
+              <input class="input" id="insurance_provider" />
+            </div>
+          </div>
+          <div class="field">
+            <label for="address">Address</label>
+            <input class="input" id="address" />
+          </div>
+          <button class="btn" type="submit" id="submit">Save changes</button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const user = MAPS.requireAuth('patient');
+    if (user) { MAPS.renderNav(); load(); }
+
+    const alertBox = document.getElementById('alert');
+    const set = (id, v) => (document.getElementById(id).value = v || '');
+    const val = (id) => document.getElementById(id).value.trim();
+
+    async function load() {
+      try {
+        const { profile } = await MAPS.api('/patients/me');
+        set('full_name', profile.full_name);
+        set('email', profile.email);
+        set('date_of_birth', profile.date_of_birth);
+        set('phone', profile.phone);
+        set('gender', profile.gender);
+        set('insurance_provider', profile.insurance_provider);
+        set('address', profile.address);
+      } catch (err) {
+        alertBox.innerHTML = `<div class="alert error">${MAPS.escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    document.getElementById('profile-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      alertBox.innerHTML = '';
+      const btn = document.getElementById('submit');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const { profile } = await MAPS.api('/patients/me', {
+          method: 'PUT',
+          body: {
+            full_name: val('full_name'),
+            date_of_birth: val('date_of_birth') || null,
+            phone: val('phone') || null,
+            gender: val('gender') || null,
+            insurance_provider: val('insurance_provider') || null,
+            address: val('address') || null,
+          },
+        });
+        // Reflect potential name change in the stored session + navbar.
+        const u = MAPS.getUser();
+        u.full_name = profile.full_name;
+        MAPS.setSession(MAPS.getToken(), u);
+        MAPS.renderNav();
+        MAPS.toast('Profile updated.', 'success');
+      } catch (err) {
+        alertBox.innerHTML = `<div class="alert error">${MAPS.escapeHtml(err.message)}</div>`;
+      } finally {
+        btn.disabled = false; btn.textContent = 'Save changes';
+      }
+    });
+  </script>
+</body>
+</html>

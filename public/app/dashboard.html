@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — MAPS</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="navbar"></div>
+
+  <main class="page">
+    <div class="container stack">
+      <div class="row between">
+        <div>
+          <h1 id="greeting">Welcome</h1>
+          <p class="muted" style="margin:0;">Here's an overview of your care.</p>
+        </div>
+        <a href="/app/doctors.html" class="btn">＋ Book appointment</a>
+      </div>
+
+      <div class="grid cols-3" id="stats">
+        <div class="card stat"><div class="value teal" id="stat-upcoming">–</div><div class="label">Upcoming</div></div>
+        <div class="card stat"><div class="value" id="stat-completed">–</div><div class="label">Completed visits</div></div>
+        <div class="card stat"><div class="value" id="stat-total">–</div><div class="label">Total appointments</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>Upcoming appointments</h2>
+          <a href="/app/appointments.html" class="btn ghost sm">View all</a>
+        </div>
+        <div id="upcoming-list"><div class="loading-wrap"><span class="spinner"></span></div></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const user = MAPS.requireAuth('patient');
+    if (user) {
+      MAPS.renderNav();
+      document.getElementById('greeting').textContent = `Welcome, ${user.full_name.split(' ')[0]}`;
+      load();
+    }
+
+    async function load() {
+      try {
+        const { appointments } = await MAPS.api('/appointments');
+        const upcoming = appointments.filter(a => a.status === 'pending' || a.status === 'confirmed');
+        const completed = appointments.filter(a => a.status === 'completed');
+
+        document.getElementById('stat-upcoming').textContent = upcoming.length;
+        document.getElementById('stat-completed').textContent = completed.length;
+        document.getElementById('stat-total').textContent = appointments.length;
+
+        const host = document.getElementById('upcoming-list');
+        if (upcoming.length === 0) {
+          host.innerHTML = `
+            <div class="empty">
+              <div class="big">📅</div>
+              <p>No upcoming appointments.</p>
+              <a href="/app/doctors.html" class="btn">Find a doctor</a>
+            </div>`;
+          return;
+        }
+        // Soonest first.
+        upcoming.sort((a, b) => (a.appt_date + a.appt_time).localeCompare(b.appt_date + b.appt_time));
+        host.innerHTML = upcoming.map(cardRow).join('');
+      } catch (err) {
+        document.getElementById('upcoming-list').innerHTML =
+          `<div class="alert error">${MAPS.escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function cardRow(a) {
+      return `
+        <div class="row between" style="padding:.75rem 0; border-bottom:1px solid var(--line);">
+          <div class="row" style="gap:.9rem; align-items:center;">
+            <div class="avatar">${MAPS.initials(a.doctor_name)}</div>
+            <div>
+              <strong>${MAPS.escapeHtml(a.doctor_name)}</strong>
+              <div class="muted small">${MAPS.escapeHtml(a.specialty_name || '')}${a.reason ? ' · ' + MAPS.escapeHtml(a.reason) : ''}</div>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div>${MAPS.formatDate(a.appt_date)}</div>
+            <div class="muted small">${MAPS.formatTime(a.appt_time)} · ${MAPS.statusBadge(a.status)}</div>
+          </div>
+        </div>`;
+    }
+  </script>
+</body>
+</html>
