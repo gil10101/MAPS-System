@@ -86,20 +86,21 @@
 
     function renderStatusBars(a) {
       const items = [
-        ['Pending', a.pending, 'var(--amber)'],
-        ['Confirmed', a.confirmed, 'var(--blue-600)'],
-        ['Completed', a.completed, 'var(--green)'],
-        ['Cancelled', a.cancelled, 'var(--red)'],
+        ['Pending', a.pending],
+        ['Confirmed', a.confirmed],
+        ['Completed', a.completed],
+        ['Cancelled', a.cancelled],
       ];
       const max = Math.max(1, ...items.map(i => i[1]));
-      document.getElementById('status-bars').innerHTML = items.map(i => bar(i[0], i[1], max, i[2])).join('');
+      document.getElementById('status-bars').innerHTML =
+        items.map(i => bar(i[0], i[1], max, 'var(--brand)')).join('');
     }
 
     function renderSpecialty(volume) {
       const host = document.getElementById('specialty-bars');
       if (!volume.length) { host.innerHTML = '<p class="muted small">No data yet.</p>'; return; }
       const max = Math.max(1, ...volume.map(v => v.total_appointments));
-      host.innerHTML = volume.map(v => bar(v.specialty_name, v.total_appointments, max, 'var(--teal-500)')).join('');
+      host.innerHTML = volume.map(v => bar(v.specialty_name, v.total_appointments, max, 'var(--brand)')).join('');
     }
 
     function renderUtil(rows) {

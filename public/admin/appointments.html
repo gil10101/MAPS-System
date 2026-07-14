@@ -79,7 +79,7 @@
       try {
         const { appointments } = await MAPS.api(`/admin/appointments?${params.toString()}`);
         if (!appointments.length) {
-          host.innerHTML = `<div class="empty"><div class="big">📅</div><p>No appointments match these filters.</p></div>`;
+          host.innerHTML = `<div class="empty">${MAPS.icon('calendar','lg')}<p>No appointments match these filters.</p></div>`;
           return;
         }
         host.innerHTML = `

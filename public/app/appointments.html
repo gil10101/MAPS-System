@@ -17,7 +17,7 @@
           <h1>My appointments</h1>
           <p class="muted" style="margin:0;">Review, track, and cancel your bookings.</p>
         </div>
-        <a href="/app/doctors.html" class="btn">＋ Book appointment</a>
+        <a href="/app/doctors.html" class="btn" data-icon="plus">Book appointment</a>
       </div>
 
       <div class="card">
@@ -71,7 +71,7 @@
       const rows = visible();
       const host = document.getElementById('list');
       if (rows.length === 0) {
-        host.innerHTML = `<div class="empty"><div class="big">📅</div><p>Nothing here yet.</p>
+        host.innerHTML = `<div class="empty">${MAPS.icon('calendar','lg')}<p>Nothing here yet.</p>
           <a href="/app/doctors.html" class="btn">Book an appointment</a></div>`;
         return;
       }

@@ -17,7 +17,7 @@
           <h1>Physicians</h1>
           <p class="muted" style="margin:0;">Add, edit, or deactivate providers.</p>
         </div>
-        <button class="btn" onclick="openModal()">＋ Add physician</button>
+        <button class="btn" data-icon="plus" onclick="openModal()">Add physician</button>
       </div>
 
       <div class="card">
@@ -31,7 +31,7 @@
     <div class="modal">
       <div class="modal-head">
         <h3 id="m-title">Add physician</h3>
-        <button class="close" onclick="closeModal()">&times;</button>
+        <button class="close" data-icon="close" onclick="closeModal()"></button>
       </div>
       <div class="modal-body">
         <div id="m-alert"></div>
@@ -101,7 +101,7 @@
       try {
         const { doctors } = await MAPS.api('/admin/doctors');
         if (!doctors.length) {
-          host.innerHTML = `<div class="empty"><div class="big">🩺</div><p>No physicians yet.</p></div>`;
+          host.innerHTML = `<div class="empty">${MAPS.icon('stethoscope','lg')}<p>No physicians yet.</p></div>`;
           return;
         }
         host.innerHTML = `

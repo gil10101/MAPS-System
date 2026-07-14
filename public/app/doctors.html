@@ -41,7 +41,7 @@
     <div class="modal">
       <div class="modal-head">
         <h3 id="m-title">Book appointment</h3>
-        <button class="close" onclick="closeModal()">&times;</button>
+        <button class="close" data-icon="close" onclick="closeModal()"></button>
       </div>
       <div class="modal-body">
         <div id="m-alert"></div>
@@ -121,7 +121,7 @@
         const { doctors } = await MAPS.api(`/doctors?${params.toString()}`);
         if (doctors.length === 0) {
           host.className = '';
-          host.innerHTML = `<div class="empty card"><div class="big">🔍</div><p>No doctors match your search.</p></div>`;
+          host.innerHTML = `<div class="empty card">${MAPS.icon('search','lg')}<p>No doctors match your search.</p></div>`;
           return;
         }
         host.className = 'grid cols-2';

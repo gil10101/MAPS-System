@@ -17,7 +17,7 @@
           <h1 id="greeting">Welcome</h1>
           <p class="muted" style="margin:0;">Here's an overview of your care.</p>
         </div>
-        <a href="/app/doctors.html" class="btn">＋ Book appointment</a>
+        <a href="/app/doctors.html" class="btn" data-icon="plus">Book appointment</a>
       </div>
 
       <div class="grid cols-3" id="stats">
@@ -59,7 +59,7 @@
         if (upcoming.length === 0) {
           host.innerHTML = `
             <div class="empty">
-              <div class="big">📅</div>
+              ${MAPS.icon('calendar','lg')}
               <p>No upcoming appointments.</p>
               <a href="/app/doctors.html" class="btn">Find a doctor</a>
             </div>`;
