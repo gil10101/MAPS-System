@@ -75,17 +75,31 @@ const MAPS = (() => {
     return user && user.role === 'admin' ? '/admin/dashboard.html' : '/app/dashboard.html';
   }
 
-  // ---- Navbar -------------------------------------------------------------
-  const PATIENT_LINKS = [
-    { href: '/app/dashboard.html',    label: 'Dashboard', icon: '🏠' },
-    { href: '/app/doctors.html',      label: 'Find a Doctor', icon: '🔍' },
-    { href: '/app/appointments.html', label: 'My Appointments', icon: '📅' },
-    { href: '/app/profile.html',      label: 'Profile', icon: '👤' },
+  // ---- Sidebar navigation -------------------------------------------------
+  // Grouped links, rendered as a left sidebar (see renderNav).
+  const PATIENT_NAV = [
+    {
+      section: 'Scheduling',
+      links: [
+        { href: '/app/dashboard.html',    label: 'Dashboard', icon: '🏠' },
+        { href: '/app/doctors.html',      label: 'Find a Doctor', icon: '🔍' },
+        { href: '/app/appointments.html', label: 'My Appointments', icon: '📅' },
+      ],
+    },
+    {
+      section: 'Account',
+      links: [{ href: '/app/profile.html', label: 'Profile', icon: '👤' }],
+    },
   ];
-  const ADMIN_LINKS = [
-    { href: '/admin/dashboard.html',    label: 'Overview', icon: '📊' },
-    { href: '/admin/appointments.html', label: 'Appointments', icon: '📅' },
-    { href: '/admin/doctors.html',      label: 'Doctors', icon: '🩺' },
+  const ADMIN_NAV = [
+    {
+      section: 'Clinic',
+      links: [
+        { href: '/admin/dashboard.html',    label: 'Overview', icon: '📊' },
+        { href: '/admin/appointments.html', label: 'Appointments', icon: '📅' },
+        { href: '/admin/doctors.html',      label: 'Doctors', icon: '🩺' },
+      ],
+    },
   ];
 
   function renderNav() {
@@ -93,35 +107,46 @@ const MAPS = (() => {
     if (!host) return;
     const user = getUser();
     if (!user) return;
-    const links = user.role === 'admin' ? ADMIN_LINKS : PATIENT_LINKS;
+    const groups = user.role === 'admin' ? ADMIN_NAV : PATIENT_NAV;
     const here = location.pathname;
     const home = homeFor(user);
 
-    host.innerHTML = `
-      <nav class="navbar">
-        <div class="inner">
-          <a class="brand" href="${home}">
-            <span class="logo">M+</span> MAPS
-          </a>
-          <div class="nav-links">
-            ${links
+    const groupsHtml = groups
+      .map(
+        (g) => `
+          <div class="side-group">
+            <div class="side-section">${g.section}</div>
+            ${g.links
               .map(
-                (l) =>
-                  `<a href="${l.href}" class="${here === l.href ? 'active' : ''}">
-                     <span aria-hidden="true">${l.icon}</span>
-                     <span class="label">${l.label}</span>
-                   </a>`
+                (l) => `
+                  <a href="${l.href}" class="side-link ${here === l.href ? 'active' : ''}">
+                    <span class="ico" aria-hidden="true">${l.icon}</span>
+                    <span class="label">${l.label}</span>
+                  </a>`
               )
               .join('')}
+          </div>`
+      )
+      .join('');
+
+    host.innerHTML = `
+      <aside class="sidebar">
+        <a class="brand" href="${home}">
+          <span class="logo">M+</span> <span class="brand-name">MAPS</span>
+        </a>
+        <nav class="side-nav">${groupsHtml}</nav>
+        <div class="side-foot">
+          <div class="side-user">
+            <span class="avatar sm">${initials(user.full_name)}</span>
+            <span class="side-user-meta">
+              <span class="name">${escapeHtml(user.full_name)}</span>
+              <span class="role">${user.role === 'admin' ? 'Administrator' : 'Patient'}</span>
+            </span>
           </div>
-          <div class="nav-user">
-            <span class="who">${escapeHtml(user.full_name)}${
-      user.role === 'admin' ? ' · Admin' : ''
-    }</span>
-            <button class="btn secondary sm" onclick="MAPS.logout()">Log out</button>
-          </div>
+          <button class="btn secondary sm block" onclick="MAPS.logout()">Log out</button>
         </div>
-      </nav>`;
+      </aside>`;
+    document.body.classList.add('has-sidebar');
   }
 
   // ---- Toast --------------------------------------------------------------

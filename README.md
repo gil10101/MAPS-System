@@ -151,10 +151,13 @@ Two layers protect against conflicting bookings:
 
 ## Deployment
 
-The app is a single Node process, so it deploys anywhere Node runs. See
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for a step-by-step **AWS EC2** guide
-(the setup used for the class demo), plus notes on environment variables and
-running it as a background service.
+The app is a single Node process, so it deploys anywhere Node runs.
+
+- **Free hosting:** push to GitHub and deploy to **Render** in a couple of
+  clicks — this repo includes a `render.yaml` blueprint. (Fly.io and running on
+  `localhost` are also good free options.)
+- **AWS:** see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for a step-by-step EC2
+  guide plus environment-variable notes and free-tier alternatives.
 
 ---
 

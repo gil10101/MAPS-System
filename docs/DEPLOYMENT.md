@@ -28,7 +28,32 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 ---
 
-## Option A — AWS EC2 (used for the class demo)
+## Free hosting options (no AWS bill)
+
+AWS EC2 is only free for the first 12 months of a new account. If that's not an
+option, these free tiers run this app (Node + Express + SQLite) without needing
+a separate hosted database like Supabase:
+
+| Host | Free? | Notes |
+|------|-------|-------|
+| **Render.com** | Yes | Easiest. This repo ships a `render.yaml` — on Render, choose **New → Blueprint** and point it at the repo. Sleeps after ~15 min idle; disk is ephemeral so the start command re-seeds demo data on each boot. |
+| **Fly.io** | Free allowance | Supports a free persistent volume, so SQLite data survives restarts. Needs a `Dockerfile` / `fly.toml`. |
+| **Railway** | $5/mo trial credit | Easy, persistent volumes, but not unlimited-free. |
+| **Localhost** | Free | Running `npm start` on a laptop is perfectly fine for a class presentation. |
+
+> Avoid Vercel/Netlify for this app — they run serverless functions with an
+> ephemeral, read-only filesystem, so a persistent SQLite file won't work there.
+
+### Deploy to Render (recommended free option)
+
+1. Push this repo to GitHub.
+2. Go to [render.com](https://render.com) → **New → Blueprint** → connect the repo.
+3. Render reads `render.yaml`, runs `npm install`, then `npm run seed && npm start`.
+4. Open the generated `*.onrender.com` URL. Demo logins from the README work.
+
+---
+
+## Option A — AWS EC2 (12-month free tier)
 
 ### 1. Launch an instance
 - **AMI:** Amazon Linux 2023 (or Ubuntu 22.04)
