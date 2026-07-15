@@ -1,16 +1,18 @@
 # Dependencies
 node_modules/
+client/node_modules/
+
+# Build output
+client/dist/
+dist/
+build/
 
 # Environment
 .env
 .env.local
 
-# SQLite database files (generated at runtime)
-data/*.db
-data/*.db-shm
-data/*.db-wal
-*.sqlite
-*.sqlite3
+# Legacy local SQLite files (no longer used)
+data/
 
 # Logs
 logs/
@@ -23,7 +25,3 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
-
-# Build output
-dist/
-build/

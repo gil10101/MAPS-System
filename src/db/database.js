@@ -1,39 +1,77 @@
 /**
- * Database connection + initialization.
+ * Database layer — PostgreSQL via node-postgres (pg).
  *
- * Uses better-sqlite3 (synchronous SQLite driver). The database file is
- * created on first run and the schema is applied automatically, so a fresh
- * clone works with no manual DB setup.
+ * The connection string comes from DATABASE_URL (e.g. a Neon connection
+ * string). SSL is enabled automatically for remote hosts and disabled for
+ * localhost, so the same code works against Neon and a local Postgres.
  */
 'use strict';
 
-const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const path = require('path');
+const { Pool, types } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || 'data/maps.db';
-const absDbPath = path.isAbsolute(DB_PATH)
-  ? DB_PATH
-  : path.join(__dirname, '..', '..', DB_PATH);
+// Return DATE columns as plain 'YYYY-MM-DD' strings (not JS Date objects) so
+// date comparisons and JSON responses stay timezone-safe.
+types.setTypeParser(1082, (v) => v);
+// Return BIGINT (e.g. COUNT(*)) as a number instead of a string.
+types.setTypeParser(20, (v) => parseInt(v, 10));
 
-// Ensure the containing directory exists (e.g. ./data)
-fs.mkdirSync(path.dirname(absDbPath), { recursive: true });
-
-const db = new Database(absDbPath);
-
-// Recommended pragmas for a small web app
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-/**
- * Apply the schema. Safe to call on every startup (all statements use
- * IF NOT EXISTS).
- */
-function initSchema() {
-  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  db.exec(schema);
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error(
+    'DATABASE_URL is not set.\n' +
+      'Create a free Postgres database at https://neon.tech, then put its\n' +
+      'connection string in .env (see .env.example).'
+  );
+  process.exit(1);
 }
 
-initSchema();
+const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
 
-module.exports = db;
+const pool = new Pool({
+  connectionString,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+  max: 10,
+});
+
+/** Run a query, return all rows. */
+async function query(text, params) {
+  const result = await pool.query(text, params);
+  return result.rows;
+}
+
+/** Run a query, return the first row (or null). */
+async function one(text, params) {
+  const result = await pool.query(text, params);
+  return result.rows[0] || null;
+}
+
+/**
+ * Run `fn(client)` inside a transaction. Rolls back on any thrown error.
+ * @template T
+ * @param {(client: import('pg').PoolClient) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function tx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Apply the schema. Idempotent (IF NOT EXISTS everywhere). */
+async function init() {
+  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  await pool.query(schema);
+}
+
+module.exports = { pool, query, one, tx, init };

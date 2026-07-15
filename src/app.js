@@ -1,10 +1,11 @@
 /**
- * Express application setup: middleware, API routes, static frontend, and
+ * Express application setup: middleware, API routes, static SPA serving, and
  * error handling. The HTTP server itself is started in server.js.
  */
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 
 const authRoutes = require('./routes/auth');
@@ -29,7 +30,7 @@ if (process.env.NODE_ENV !== 'test') {
   });
 }
 
-// Health check (useful for AWS load balancers).
+// Health check (useful for hosting platforms / load balancers).
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // API routes
@@ -39,12 +40,28 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/admin', adminRoutes);
 
-// Unknown API route -> JSON 404 (before static fallthrough).
+// Unknown API route -> JSON 404 (before SPA fallthrough).
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
-// Serve the static frontend from /public
-const publicDir = path.join(__dirname, '..', 'public');
-app.use(express.static(publicDir));
+// ---------------------------------------------------------------------------
+// Frontend: serve the built React app (client/dist) with an SPA fallback so
+// client-side routes like /app/doctors work on refresh/deep-link.
+// In development, run the Vite dev server instead (npm run dev:client).
+// ---------------------------------------------------------------------------
+const distDir = path.join(__dirname, '..', 'client', 'dist');
+const indexHtml = path.join(distDir, 'index.html');
+
+app.use(express.static(distDir));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+  if (!fs.existsSync(indexHtml)) {
+    return res
+      .status(503)
+      .type('text')
+      .send('Frontend not built yet. Run "npm run build" (or use the Vite dev server: npm run dev:client).');
+  }
+  return res.sendFile(indexHtml);
+});
 
 // Centralized error handler.
 // eslint-disable-next-line no-unused-vars

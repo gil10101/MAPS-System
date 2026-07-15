@@ -1,12 +1,14 @@
 {
   "name": "maps-system",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Medical Appointment and Patient Scheduling System (MAPS) - CIS 9590 group project",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client install && npm --prefix client run build",
     "seed": "node src/db/seed.js",
     "reset-db": "node src/db/seed.js --reset"
   },
@@ -15,16 +17,18 @@
     "appointments",
     "scheduling",
     "express",
-    "sqlite"
+    "postgres",
+    "react",
+    "typescript"
   ],
   "author": "Liu Maggie, Lopez Raylene, Lu Gil, Mammadov Mehdi",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.0"
   },
   "engines": {
     "node": ">=18"

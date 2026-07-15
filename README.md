@@ -9,6 +9,20 @@ operational reports.
 
 ---
 
+## Tech stack
+
+| Layer     | Technology                                        |
+|-----------|----------------------------------------------------|
+| Frontend  | React 18 + TypeScript, Vite, react-router, lucide-react |
+| Backend   | Node.js + Express (REST API)                       |
+| Database  | PostgreSQL (hosted free on [Neon](https://neon.tech)) |
+| Auth      | JWT (`jsonwebtoken`) + bcrypt password hashing     |
+
+One Node process serves both the API and the built React app, so deployment is
+a single service.
+
+---
+
 ## Features
 
 **Patients**
@@ -24,43 +38,31 @@ operational reports.
 - Operational reports: appointment volume, physician utilization,
   cancellation rate, and status breakdown
 
-**Platform**
-- JWT authentication with hashed passwords (bcrypt) and role-based access
-- Single Node process serves both the REST API and the frontend — easy to deploy
-- SQLite database, created and seeded automatically — no DB server to install
-
----
-
-## Tech stack
-
-| Layer     | Technology                              |
-|-----------|-----------------------------------------|
-| Backend   | Node.js + Express                       |
-| Database  | SQLite (via `better-sqlite3`)           |
-| Auth      | JSON Web Tokens (`jsonwebtoken`) + `bcryptjs` |
-| Frontend  | Vanilla HTML/CSS/JavaScript (no build step) |
-
 ---
 
 ## Quick start
 
-Requires **Node.js 18+**.
+Requires **Node.js 18+** and a PostgreSQL connection string.
+
+### 1. Get a free Postgres database (Neon)
+
+1. Sign up at [neon.tech](https://neon.tech) (free, no credit card).
+2. Create a project (e.g. `maps`) and copy the **connection string** from the
+   dashboard. It looks like
+   `postgres://USER:PASS@ep-xxx.aws.neon.tech/neondb?sslmode=require`.
+3. Teammates can share the same connection string — everyone sees the same data.
+
+(A local Postgres works too: `postgres://postgres:postgres@localhost:5432/maps`.)
+
+### 2. Configure and run
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Create your environment file
-cp .env.example .env
-
-# 3. Seed the database with demo data (doctors, an admin, sample patients)
-npm run seed
-
-# 4. Start the server
-npm start
+npm install                # server dependencies
+cp .env.example .env       # then paste your DATABASE_URL into .env
+npm run seed               # create tables + demo data
+npm run build              # build the React frontend (client/dist)
+npm start                  # serve everything on http://localhost:3000
 ```
-
-Then open **http://localhost:3000**.
 
 ### Demo logins
 
@@ -69,16 +71,86 @@ Then open **http://localhost:3000**.
 | Admin   | `admin@maps.health`  | `admin123`   |
 | Patient | `jdoe@example.com`   | `patient123` |
 
-New patients can also self-register from the sign-up page.
+### Development mode (hot reload)
 
-### Useful scripts
+Run the API and the Vite dev server in two terminals:
 
-| Command            | Description                                        |
-|--------------------|----------------------------------------------------|
-| `npm start`        | Start the server                                   |
-| `npm run dev`      | Start with auto-reload on file changes             |
-| `npm run seed`     | Insert demo data (skips if data already exists)    |
-| `npm run reset-db` | Wipe all tables and re-seed from scratch           |
+```bash
+npm run dev          # Express API on :3000 (restarts on change)
+npm run dev:client   # React app on :5173 (hot reload, proxies /api to :3000)
+```
+
+Open http://localhost:5173 while developing. `npm run build && npm start`
+produces the single-server production setup.
+
+### All scripts
+
+| Command              | Description                                      |
+|----------------------|--------------------------------------------------|
+| `npm start`          | Start the server (API + built frontend)          |
+| `npm run dev`        | API only, restarts on file changes               |
+| `npm run dev:client` | Vite dev server for the React app (hot reload)   |
+| `npm run build`      | Install client deps + build React app to `client/dist` |
+| `npm run seed`       | Create schema + demo data (skips if data exists) |
+| `npm run reset-db`   | Wipe all tables and re-seed from scratch         |
+
+---
+
+## How authentication works (JWT + bcrypt)
+
+We implemented authentication ourselves rather than using a hosted auth
+provider — it follows the standard production pattern for Express APIs and
+every step is inspectable in this repo.
+
+**1. Passwords are never stored — only bcrypt hashes.**
+On registration (`src/routes/auth.js`), the password is run through
+`bcrypt.hashSync(password, 10)`. bcrypt is a deliberately *slow*, salted,
+one-way hash: even if the database leaked, the original passwords could not
+be recovered, and identical passwords produce different hashes because each
+gets a random salt.
+
+**2. Login exchanges credentials for a signed token.**
+On login the server compares the submitted password against the stored hash
+with `bcrypt.compareSync`. If it matches, the server issues a **JSON Web
+Token** (`src/middleware/auth.js`): a Base64-encoded payload
+(`{ id, role, email, full_name }` + expiry) **signed** with a server-side
+secret (`JWT_SECRET`). The signature means the server can later verify the
+token was issued by us and was not tampered with — no session storage needed.
+
+**3. The client sends the token on every request.**
+The React app stores the token and attaches it as an
+`Authorization: Bearer <token>` header (`client/src/lib/api.ts`). Tokens
+expire after `JWT_EXPIRES_IN` (default 7 days); an expired/invalid token
+gets a 401 and the client redirects to the login page.
+
+**4. Middleware enforces authentication and roles.**
+- `requireAuth` verifies the token signature and expiry, then attaches the
+  decoded user to `req.user`.
+- `requireRole('admin')` / `requireRole('patient')` gate each route by role,
+  so a patient token can never call admin endpoints (it gets a 403), and all
+  patient data access is scoped to the logged-in user's own records.
+
+```
+Register/Login                    Authenticated request
+──────────────                    ─────────────────────
+password ──bcrypt──▶ hash in DB   Authorization: Bearer <JWT>
+credentials ──▶ verify ──▶ JWT            │
+      ◀────────── token ◀─┘        requireAuth ─▶ verify signature/expiry
+                                   requireRole ─▶ patient | admin
+                                        │
+                                   route handler (req.user)
+```
+
+---
+
+## How double-booking is prevented
+
+1. **Availability check** — the API recomputes a doctor's open slots from
+   their weekly schedule minus existing bookings before accepting a booking.
+2. **Database constraint** — a Postgres **partial unique index**
+   (`doctor_id, appt_date, appt_time` `WHERE status != 'cancelled'`) makes it
+   impossible for two active appointments to occupy the same slot, even if two
+   requests race — the second insert fails and the API returns 409.
 
 ---
 
@@ -86,27 +158,26 @@ New patients can also self-register from the sign-up page.
 
 ```
 MAPS-System/
-├── server.js                 # Entry point — starts the HTTP server
-├── src/
-│   ├── app.js                # Express app: middleware, routes, static serving
+├── server.js                  # Entry point — init DB, start HTTP server
+├── src/                       # Express backend
+│   ├── app.js                 # Middleware, routes, SPA serving
 │   ├── db/
-│   │   ├── database.js        # SQLite connection + schema init
-│   │   ├── schema.sql         # Database schema (tables, indexes)
+│   │   ├── database.js        # pg Pool + query/tx helpers (DATABASE_URL)
+│   │   ├── schema.sql         # PostgreSQL schema (tables, indexes)
 │   │   └── seed.js            # Demo data seeder
 │   ├── middleware/auth.js     # JWT sign/verify + role guards
-│   ├── routes/
-│   │   ├── auth.js            # register / login / me
-│   │   ├── doctors.js         # doctor search + availability (patient)
-│   │   ├── appointments.js    # book / list / cancel (patient)
-│   │   ├── patients.js        # profile read/update (patient)
-│   │   └── admin.js           # doctor CRUD, appointment mgmt, reports (admin)
-│   └── utils/slots.js         # Turns weekly schedules into open time slots
-├── public/                   # Frontend (served statically)
-│   ├── index.html             # Landing page
-│   ├── login.html / register.html
-│   ├── app/                   # Patient pages
-│   └── admin/                 # Administrator pages
-└── data/                     # SQLite database file (created at runtime)
+│   ├── routes/                # auth, doctors, appointments, patients, admin
+│   └── utils/                 # slot generation, async handler wrapper
+└── client/                    # React + TypeScript frontend (Vite)
+    ├── index.html
+    └── src/
+        ├── main.tsx, App.tsx  # Entry + routes
+        ├── lib/api.ts         # Typed API client + session + helpers
+        ├── components/        # Layout (sidebar shell), guards, modal, toast
+        ├── pages/             # Landing, Login, Register
+        │   ├── patient/       # Dashboard, Doctors, Appointments, Profile
+        │   └── admin/         # Overview, Appointments, Doctors
+        └── styles.css         # Design system (navy shell, blue accent)
 ```
 
 ---
@@ -136,28 +207,13 @@ All `/api` routes return JSON. Authenticated routes expect an
 
 ---
 
-## How double-booking is prevented
-
-Two layers protect against conflicting bookings:
-
-1. **Availability check** — the API recomputes a doctor's open slots from their
-   weekly schedule minus existing bookings before accepting a new appointment.
-2. **Database constraint** — a partial unique index
-   (`doctor_id, appt_date, appt_time` where `status != 'cancelled'`) makes it
-   impossible for two active appointments to occupy the same slot, even under a
-   race condition.
-
----
-
 ## Deployment
 
-The app is a single Node process, so it deploys anywhere Node runs.
-
-- **Free hosting:** push to GitHub and deploy to **Render** in a couple of
-  clicks — this repo includes a `render.yaml` blueprint. (Fly.io and running on
-  `localhost` are also good free options.)
-- **AWS:** see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for a step-by-step EC2
-  guide plus environment-variable notes and free-tier alternatives.
+- **Free hosting:** deploy to **Render** via the included `render.yaml`
+  blueprint — set `DATABASE_URL` to your Neon connection string in the Render
+  dashboard. Data lives in Neon, so it persists across deploys.
+- **AWS:** see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for a step-by-step
+  EC2 guide plus other options.
 
 ---
 

@@ -23,31 +23,28 @@ function toHHMM(mins) {
  * Return the list of available 'HH:MM' start times for a doctor on a date.
  * @param {number} doctorId
  * @param {string} dateStr 'YYYY-MM-DD'
- * @returns {string[]} sorted available slot start times
+ * @returns {Promise<string[]>} sorted available slot start times
  */
-function getAvailableSlots(doctorId, dateStr) {
+async function getAvailableSlots(doctorId, dateStr) {
   // Parse date as local-noon to avoid timezone rollover surprises.
   const date = new Date(`${dateStr}T12:00:00`);
   if (isNaN(date.getTime())) return [];
   const weekday = date.getDay(); // 0..6
 
-  const windows = db
-    .prepare(
-      `SELECT start_time, end_time, slot_minutes
-       FROM doctor_schedules
-       WHERE doctor_id = ? AND weekday = ?`
-    )
-    .all(doctorId, weekday);
-
+  const windows = await db.query(
+    `SELECT start_time, end_time, slot_minutes
+     FROM doctor_schedules
+     WHERE doctor_id = $1 AND weekday = $2`,
+    [doctorId, weekday]
+  );
   if (windows.length === 0) return [];
 
   // Slots already booked (any non-cancelled appointment) for this doctor/date.
-  const takenRows = db
-    .prepare(
-      `SELECT appt_time FROM appointments
-       WHERE doctor_id = ? AND appt_date = ? AND status != 'cancelled'`
-    )
-    .all(doctorId, dateStr);
+  const takenRows = await db.query(
+    `SELECT appt_time FROM appointments
+     WHERE doctor_id = $1 AND appt_date = $2 AND status != 'cancelled'`,
+    [doctorId, dateStr]
+  );
   const taken = new Set(takenRows.map((r) => r.appt_time));
 
   const slots = [];
@@ -65,8 +62,9 @@ function getAvailableSlots(doctorId, dateStr) {
 }
 
 /** True if the given slot is a valid, currently-open slot for the doctor/date. */
-function isSlotAvailable(doctorId, dateStr, timeStr) {
-  return getAvailableSlots(doctorId, dateStr).includes(timeStr);
+async function isSlotAvailable(doctorId, dateStr, timeStr) {
+  const slots = await getAvailableSlots(doctorId, dateStr);
+  return slots.includes(timeStr);
 }
 
 module.exports = { getAvailableSlots, isSlotAvailable, toMinutes, toHHMM };

@@ -81,11 +81,14 @@ p  { margin: 0 0 16px; }
 .in-btn { margin-right: 4px; }
 
 /* ---------- App shell (dark background, floating white panel) ---------- */
+/* React renders inside #root, so the flex shell lives there. */
 body.has-sidebar {
-  display: flex; height: 100vh; overflow: hidden;
+  height: 100vh; overflow: hidden;
   background: var(--navy);
 }
-#navbar { display: contents; }
+body.has-sidebar #root {
+  display: flex; height: 100vh;
+}
 
 body.has-sidebar .page {
   flex: 1; min-width: 0;
