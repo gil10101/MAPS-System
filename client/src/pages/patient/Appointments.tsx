@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Check, Plus } from 'lucide-react';
+import { Calendar, Check, FileText, Plus } from 'lucide-react';
 import {
   api, formatDate, formatTime, PATIENT_CANCEL_REASONS, type Appointment,
 } from '../../lib/api';
-import { Badge, ConfirmBadge, Empty, ReasonModal, Spinner } from '../../components/ui';
+import { Badge, ConfirmBadge, Empty, Modal, ReasonModal, Spinner } from '../../components/ui';
 import { useToast } from '../../components/Toast';
 
 type Filter = 'all' | 'upcoming' | 'past';
@@ -15,6 +15,7 @@ export default function Appointments() {
   const [filter, setFilter] = useState<Filter>('all');
   const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState<Appointment | null>(null);
+  const [viewingNote, setViewingNote] = useState<Appointment | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -157,6 +158,10 @@ export default function Appointments() {
                               Cancel
                             </button>
                           </div>
+                        ) : a.status === 'completed' && a.notes ? (
+                          <button className="btn secondary sm" onClick={() => setViewingNote(a)}>
+                            <FileText className="lucide in-btn" /> Visit note
+                          </button>
                         ) : (
                           <span className="muted small">—</span>
                         )}
@@ -169,6 +174,27 @@ export default function Appointments() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!viewingNote}
+        title="Visit note"
+        onClose={() => setViewingNote(null)}
+        footer={
+          <button className="btn secondary" onClick={() => setViewingNote(null)}>
+            Close
+          </button>
+        }
+      >
+        {viewingNote && (
+          <>
+            <p className="muted small">
+              {viewingNote.doctor_name} · {formatDate(viewingNote.appt_date)} at{' '}
+              {formatTime(viewingNote.appt_time)}
+            </p>
+            <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewingNote.notes}</p>
+          </>
+        )}
+      </Modal>
 
       <ReasonModal
         open={!!cancelling}

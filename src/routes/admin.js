@@ -5,6 +5,7 @@
 'use strict';
 
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const wrap = require('../utils/wrap');
 const { requireAuth, requireRole } = require('../middleware/auth');
@@ -18,16 +19,61 @@ router.use(requireAuth, requireRole('admin'));
 // Doctors CRUD
 // ---------------------------------------------------------------------------
 
-/** GET /api/admin/doctors — all doctors (including inactive). */
+/** GET /api/admin/doctors — all doctors (including inactive), with login state. */
 router.get(
   '/doctors',
   wrap(async (req, res) => {
     const rows = await db.query(
-      `SELECT d.*, s.name AS specialty_name
-       FROM doctors d LEFT JOIN specialties s ON s.id = d.specialty_id
+      `SELECT d.*, s.name AS specialty_name, u.email AS login_email
+       FROM doctors d
+       LEFT JOIN specialties s ON s.id = d.specialty_id
+       LEFT JOIN users u ON u.id = d.user_id
        ORDER BY d.full_name`
     );
     res.json({ doctors: rows });
+  })
+);
+
+/**
+ * POST /api/admin/doctors/:id/account — create the physician's portal login.
+ * Body: { email, password }
+ * Admins provision accounts; doctors do not self-register (the clinic vouches
+ * for who its physicians are, unlike patients).
+ */
+router.post(
+  '/doctors/:id/account',
+  wrap(async (req, res) => {
+    const doc = await db.one('SELECT * FROM doctors WHERE id = $1', [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Doctor not found.' });
+    if (doc.user_id) {
+      return res.status(409).json({ error: 'This physician already has a login.' });
+    }
+
+    const { email, password } = req.body || {};
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'A valid email is required.' });
+    }
+    if (String(password || '').length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    }
+
+    try {
+      const user = await db.tx(async (c) => {
+        const u = await c.query(
+          `INSERT INTO users (email, password_hash, role, full_name)
+           VALUES ($1, $2, 'doctor', $3) RETURNING id, email`,
+          [String(email).toLowerCase(), bcrypt.hashSync(String(password), 10), doc.full_name]
+        );
+        await c.query('UPDATE doctors SET user_id = $1 WHERE id = $2', [u.rows[0].id, doc.id]);
+        return u.rows[0];
+      });
+      res.status(201).json({ ok: true, login_email: user.email });
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'An account with that email already exists.' });
+      }
+      throw err;
+    }
   })
 );
 
@@ -142,8 +188,15 @@ router.post(
 // Appointment oversight
 // ---------------------------------------------------------------------------
 
+// Deliberately NOT a.* — a.notes is the clinical visit note, and scheduling
+// staff have no need-to-know for chart content (minimum necessary). Admin
+// endpoints get every operational column and nothing clinical.
 const ADMIN_APPT_SELECT = `
-  SELECT a.*, d.full_name AS doctor_name, s.name AS specialty_name,
+  SELECT a.id, a.patient_id, a.doctor_id, a.appt_date, a.appt_time, a.reason,
+         a.status, a.confirmation_status, a.confirmed_at,
+         a.cancel_reason, a.cancelled_by, a.cancelled_at,
+         a.created_at, a.updated_at,
+         d.full_name AS doctor_name, s.name AS specialty_name,
          u.full_name AS patient_name, u.email AS patient_email
   FROM appointments a
   JOIN doctors d  ON d.id = a.doctor_id
@@ -209,7 +262,10 @@ router.patch(
   '/appointments/:id/status',
   wrap(async (req, res) => {
     const valid = ['completed', 'cancelled', 'no_show'];
-    const { status, notes, reason } = req.body || {};
+    // No `notes` here: the visit note is clinical and belongs to the doctor
+    // (PATCH /api/doctor/appointments/:id/complete). Admin records outcomes
+    // and operational reasons only.
+    const { status, reason } = req.body || {};
     if (!valid.includes(status)) {
       return res.status(400).json({
         error: `Invalid status. Expected one of: ${valid.join(', ')}.`,
@@ -232,24 +288,21 @@ router.patch(
       await db.query(
         `UPDATE appointments
          SET status = 'cancelled', cancelled_by = 'practice', cancel_reason = $2,
-             cancelled_at = now(), notes = COALESCE($3, notes), updated_at = now()
+             cancelled_at = now(), updated_at = now()
          WHERE id = $1`,
-        [appt.id, String(reason).trim(), notes ?? null]
+        [appt.id, String(reason).trim()]
       );
     } else if (status === 'no_show') {
       await db.query(
         `UPDATE appointments
-         SET status = 'no_show', cancel_reason = $2, notes = COALESCE($3, notes),
-             updated_at = now()
+         SET status = 'no_show', cancel_reason = $2, updated_at = now()
          WHERE id = $1`,
-        [appt.id, String(reason).trim(), notes ?? null]
+        [appt.id, String(reason).trim()]
       );
     } else {
       await db.query(
-        `UPDATE appointments
-         SET status = 'completed', notes = COALESCE($2, notes), updated_at = now()
-         WHERE id = $1`,
-        [appt.id, notes ?? null]
+        `UPDATE appointments SET status = 'completed', updated_at = now() WHERE id = $1`,
+        [appt.id]
       );
     }
 

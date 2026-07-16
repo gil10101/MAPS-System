@@ -369,6 +369,15 @@ textarea { resize: vertical; min-height: 5.5rem; }
 .badge.confirm-yes { background: var(--green-soft); color: var(--on-green-soft); }
 .badge.confirm-no  { background: var(--amber-soft); color: var(--on-amber-soft); }
 
+/* Generic semantic badges for clinical records (prescription status, result
+   flags, refill decisions, ...) — same palette, meaning chosen at the call
+   site: good=green, warn=amber, bad=red, info=blue, neutral=grey. */
+.badge.good    { background: var(--green-soft); color: var(--on-green-soft); }
+.badge.warn    { background: var(--amber-soft); color: var(--on-amber-soft); }
+.badge.bad     { background: var(--red-soft);   color: var(--on-red-soft); }
+.badge.info    { background: var(--brand-soft); color: var(--on-brand-soft); }
+.badge.neutral { background: var(--fill);       color: var(--on-fill); }
+
 /* ---------- Tables ---------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
@@ -415,6 +424,15 @@ td.actions { text-align: right; }
   .table-stack td.actions { padding: var(--s3) 0 0; text-align: left; }
   .table-stack td.actions::before { content: none; }
 }
+
+/* ---------- Back link (chart header) ---------- */
+/* Standalone navigation link — unlike links in prose it has no surrounding
+   text to enlarge its target, so it must be a real tap target on its own. */
+.back-link {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  min-height: var(--tap); color: var(--slate); font-size: .85rem; font-weight: 500;
+}
+.back-link:hover { color: var(--ink); text-decoration: none; }
 
 /* ---------- Filter bar ---------- */
 /* auto-fit rather than fixed columns: filters reflow from 4 across to 1 without

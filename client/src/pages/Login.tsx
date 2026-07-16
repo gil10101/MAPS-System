@@ -90,6 +90,8 @@ export default function Login() {
             <br />
             Patient: <code>jdoe@example.com</code> / <code>patient123</code>
             <br />
+            Doctor: <code>mreid@maps.health</code> / <code>doctor123</code>
+            <br />
             Admin: <code>admin@maps.health</code> / <code>admin123</code>
           </div>
         </div>

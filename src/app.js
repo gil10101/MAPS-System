@@ -10,6 +10,7 @@ const express = require('express');
 
 const authRoutes = require('./routes/auth');
 const doctorRoutes = require('./routes/doctors');
+const doctorPortalRoutes = require('./routes/doctor-portal');
 const appointmentRoutes = require('./routes/appointments');
 const patientRoutes = require('./routes/patients');
 const adminRoutes = require('./routes/admin');
@@ -35,7 +36,8 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().t
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/doctors', doctorRoutes);
+app.use('/api/doctors', doctorRoutes);       // public directory (browse/book)
+app.use('/api/doctor', doctorPortalRoutes);  // physician's own portal
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/admin', adminRoutes);

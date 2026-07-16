@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import {
-  Calendar, Home, LayoutGrid, LogOut, Search, Stethoscope, User as UserIcon,
+  Calendar, CalendarClock, HeartPulse, Home, LayoutGrid, LogOut, Pill, Search,
+  Stethoscope, User as UserIcon, Users,
   type LucideIcon,
 } from 'lucide-react';
 import { getUser, homeFor, initials, logout } from '../lib/api';
@@ -29,6 +30,10 @@ const PATIENT_NAV: NavGroup[] = [
     ],
   },
   {
+    section: 'My care',
+    links: [{ to: '/app/health', label: 'Health Record', short: 'Health', icon: HeartPulse }],
+  },
+  {
     section: 'Account',
     links: [{ to: '/app/profile', label: 'Profile', icon: UserIcon }],
   },
@@ -41,6 +46,17 @@ const ADMIN_NAV: NavGroup[] = [
       { to: '/admin', end: true, label: 'Overview', icon: LayoutGrid },
       { to: '/admin/appointments', label: 'Appointments', short: 'Appts', icon: Calendar },
       { to: '/admin/doctors', label: 'Doctors', icon: Stethoscope },
+    ],
+  },
+];
+
+const DOCTOR_NAV: NavGroup[] = [
+  {
+    section: 'Practice',
+    links: [
+      { to: '/doctor', end: true, label: 'Schedule', icon: CalendarClock },
+      { to: '/doctor/patients', label: 'My Patients', short: 'Patients', icon: Users },
+      { to: '/doctor/refills', label: 'Refill Requests', short: 'Refills', icon: Pill },
     ],
   },
 ];
@@ -59,7 +75,8 @@ export default function Layout() {
   }, []);
 
   if (!user) return null; // Protected handles the redirect.
-  const groups = user.role === 'admin' ? ADMIN_NAV : PATIENT_NAV;
+  const groups =
+    user.role === 'admin' ? ADMIN_NAV : user.role === 'doctor' ? DOCTOR_NAV : PATIENT_NAV;
   const tabs = groups.flatMap((g) => g.links);
 
   return (
@@ -105,7 +122,9 @@ export default function Layout() {
             <span className="avatar sm">{initials(user.full_name)}</span>
             <span className="side-user-meta">
               <span className="name">{user.full_name}</span>
-              <span className="role">{user.role === 'admin' ? 'Administrator' : 'Patient'}</span>
+              <span className="role">
+                {user.role === 'admin' ? 'Administrator' : user.role === 'doctor' ? 'Physician' : 'Patient'}
+              </span>
             </span>
           </div>
           <button className="btn secondary sm block" onClick={logout}>

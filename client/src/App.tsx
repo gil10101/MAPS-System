@@ -10,11 +10,17 @@ import Register from './pages/Register';
 import Dashboard from './pages/patient/Dashboard';
 import Doctors from './pages/patient/Doctors';
 import Appointments from './pages/patient/Appointments';
+import Health from './pages/patient/Health';
 import Profile from './pages/patient/Profile';
 
 import Overview from './pages/admin/Overview';
 import AdminAppointments from './pages/admin/Appointments';
 import AdminDoctors from './pages/admin/Doctors';
+
+import DoctorSchedule from './pages/doctor/Schedule';
+import DoctorPatients from './pages/doctor/Patients';
+import PatientChart from './pages/doctor/PatientChart';
+import DoctorRefills from './pages/doctor/Refills';
 
 export default function App() {
   return (
@@ -36,7 +42,22 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="doctors" element={<Doctors />} />
             <Route path="appointments" element={<Appointments />} />
+            <Route path="health" element={<Health />} />
             <Route path="profile" element={<Profile />} />
+          </Route>
+
+          <Route
+            path="/doctor"
+            element={
+              <Protected role="doctor">
+                <Layout />
+              </Protected>
+            }
+          >
+            <Route index element={<DoctorSchedule />} />
+            <Route path="patients" element={<DoctorPatients />} />
+            <Route path="patients/:id" element={<PatientChart />} />
+            <Route path="refills" element={<DoctorRefills />} />
           </Route>
 
           <Route

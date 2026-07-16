@@ -4,7 +4,7 @@
 
 // ---------- Types ----------------------------------------------------------
 
-export type Role = 'patient' | 'admin';
+export type Role = 'patient' | 'admin' | 'doctor';
 
 /**
  * Where the visit sits in its lifecycle. There is no "pending": a booking is
@@ -80,6 +80,9 @@ export interface Doctor {
   bio?: string | null;
   room?: string | null;
   active?: boolean;
+  /** Portal login linkage (admin view). */
+  user_id?: number | null;
+  login_email?: string | null;
 }
 
 export interface Appointment {
@@ -95,12 +98,139 @@ export interface Appointment {
   cancel_reason: string | null;
   cancelled_by: CancelledBy | null;
   cancelled_at: string | null;
-  notes: string | null;
-  doctor_name: string;
+  /** Clinical visit note. Absent from admin endpoints (no need-to-know). */
+  notes?: string | null;
+  doctor_name?: string;
   doctor_room?: string | null;
-  specialty_name: string | null;
+  specialty_name?: string | null;
   patient_name?: string;
   patient_email?: string;
+  patient_phone?: string | null;
+  date_of_birth?: string | null;
+}
+
+// ---------- Clinical records ----------
+
+export type HistoryKind =
+  | 'condition' | 'allergy' | 'surgery' | 'immunization' | 'family' | 'other';
+
+export const HISTORY_KIND_LABEL: Record<HistoryKind, string> = {
+  condition: 'Condition',
+  allergy: 'Allergy',
+  surgery: 'Surgery',
+  immunization: 'Immunization',
+  family: 'Family history',
+  other: 'Other',
+};
+
+export interface HistoryEntry {
+  id: number;
+  patient_id: number;
+  kind: HistoryKind;
+  description: string;
+  severity: 'mild' | 'moderate' | 'severe' | null;
+  noted_on: string | null;
+  status: 'active' | 'resolved';
+  /** Self-reported entries carry different clinical weight than diagnoses. */
+  source: 'patient' | 'doctor';
+  recorded_by_name?: string | null;
+  created_at: string;
+}
+
+export interface Prescription {
+  id: number;
+  patient_id: number;
+  doctor_id: number;
+  appointment_id: number | null;
+  medication: string;
+  dosage: string;
+  frequency: string;
+  duration: string | null;
+  instructions: string | null;
+  refills_allowed: number;
+  refills_used: number;
+  status: 'active' | 'completed' | 'stopped';
+  stopped_reason: string | null;
+  created_at: string;
+  doctor_name?: string;
+  /** Patient view: the open request on this prescription, if any. */
+  open_request_id?: number | null;
+  last_request_status?: 'approved' | 'denied' | null;
+  last_request_note?: string | null;
+  /** Doctor chart view: count of requests waiting on this prescription. */
+  pending_refills?: number;
+}
+
+export interface RefillRequest {
+  id: number;
+  prescription_id: number;
+  patient_id: number;
+  note: string | null;
+  status: 'pending' | 'approved' | 'denied';
+  decision_note: string | null;
+  created_at: string;
+  medication?: string;
+  dosage?: string;
+  frequency?: string;
+  refills_allowed?: number;
+  refills_used?: number;
+  prescription_status?: string;
+  patient_name?: string;
+  patient_email?: string;
+}
+
+export interface TestResult {
+  id: number;
+  patient_id: number;
+  doctor_id: number;
+  appointment_id: number | null;
+  test_name: string;
+  status: 'ordered' | 'completed';
+  result_summary: string | null;
+  result_flag: 'normal' | 'abnormal' | 'critical' | null;
+  ordered_at: string;
+  resulted_at: string | null;
+  doctor_name?: string;
+}
+
+/** A patient row in the doctor's care list. */
+export interface CarePatient {
+  id: number;
+  full_name: string;
+  email: string;
+  date_of_birth: string | null;
+  phone: string | null;
+  next_visit: string | null;
+  last_visit: string | null;
+  visit_count: number;
+}
+
+export interface ChartVisit {
+  id: number;
+  appt_date: string;
+  appt_time: string;
+  reason: string | null;
+  status: ApptStatus;
+  notes: string | null;
+  doctor_name: string;
+  specialty_name: string | null;
+}
+
+export interface Chart {
+  profile: {
+    patient_id: number;
+    full_name: string;
+    email: string;
+    date_of_birth: string | null;
+    phone: string | null;
+    gender: string | null;
+    address: string | null;
+    insurance_provider: string | null;
+  };
+  history: HistoryEntry[];
+  prescriptions: Prescription[];
+  results: TestResult[];
+  visits: ChartVisit[];
 }
 
 export interface Profile {
@@ -182,7 +312,9 @@ export function logout(): void {
 
 /** Home route for a user's role. */
 export function homeFor(user: User | null): string {
-  return user && user.role === 'admin' ? '/admin' : '/app';
+  if (user?.role === 'admin') return '/admin';
+  if (user?.role === 'doctor') return '/doctor';
+  return '/app';
 }
 
 // ---------- Fetch wrapper ---------------------------------------------------
@@ -241,6 +373,14 @@ export function formatDate(dateStr: string | null): string {
   });
 }
 
+/** ISO timestamp -> 'Jul 16, 2026' (results, request dates). */
+export function formatStamp(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 /** 'HH:MM' 24h -> '9:30 AM' */
 export function formatTime(t: string | null): string {
   if (!t) return '';
@@ -250,11 +390,12 @@ export function formatTime(t: string | null): string {
   return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-/** First letters of the first two words: 'Sarah Chen' -> 'SC' */
-export function initials(name: string | null): string {
+/** First letters of the first two words: 'Sarah Chen' -> 'SC'.
+    Honorifics are skipped: 'Dr. Marcus Reid' -> 'MR', not 'DM'. */
+export function initials(name: string | null | undefined): string {
   return (name || '')
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((w) => w && !/^dr\.?$/i.test(w))
     .slice(0, 2)
     .map((w) => w[0].toUpperCase())
     .join('');

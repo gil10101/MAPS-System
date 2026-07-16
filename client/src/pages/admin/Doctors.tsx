@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Stethoscope } from 'lucide-react';
+import { KeyRound, Plus, Stethoscope } from 'lucide-react';
 import { api, type Doctor, type Specialty } from '../../lib/api';
-import { Empty, Modal, Spinner } from '../../components/ui';
+import { Empty, MenuItem, Modal, RowMenu, Spinner } from '../../components/ui';
 import { useToast } from '../../components/Toast';
 
 const EMPTY_FORM = {
@@ -26,6 +26,12 @@ export default function AdminDoctors() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [modalError, setModalError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Create-login modal
+  const [loginFor, setLoginFor] = useState<Doctor | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   useEffect(() => {
     api<{ specialties: Specialty[] }>('/admin/specialties')
@@ -110,6 +116,32 @@ export default function AdminDoctors() {
     }
   }
 
+  function openLoginModal(doc: Doctor) {
+    setLoginFor(doc);
+    setLoginEmail(doc.email || '');
+    setLoginPassword('');
+    setLoginError('');
+  }
+
+  async function createLogin() {
+    if (!loginFor) return;
+    setBusy(true);
+    setLoginError('');
+    try {
+      await api(`/admin/doctors/${loginFor.id}/account`, {
+        method: 'POST',
+        body: { email: loginEmail.trim(), password: loginPassword },
+      });
+      toast(`Login created — ${loginFor.full_name} can now sign in.`, 'success');
+      setLoginFor(null);
+      load();
+    } catch (err) {
+      setLoginError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="container stack">
       <div className="row between">
@@ -163,21 +195,37 @@ export default function AdminDoctors() {
                     </td>
                     <td data-label="Room">{d.room || '—'}</td>
                     <td data-label="Status">
-                      {d.active ? (
-                        <span className="badge completed">Active</span>
-                      ) : (
-                        <span className="badge cancelled">Inactive</span>
-                      )}
+                      <div className="badge-stack">
+                        {d.active ? (
+                          <span className="badge completed">Active</span>
+                        ) : (
+                          <span className="badge cancelled">Inactive</span>
+                        )}
+                        {d.login_email ? (
+                          <span className="muted small">login: {d.login_email}</span>
+                        ) : (
+                          <span className="badge warn">no login</span>
+                        )}
+                      </div>
                     </td>
                     <td className="actions">
-                      <div className="row tight" style={{ justifyContent: 'flex-end' }}>
+                      <div className="action-group">
                         <button className="btn secondary sm" onClick={() => openModal(d)}>
                           Edit
                         </button>
-                        {d.active && (
-                          <button className="btn danger sm" onClick={() => deactivate(d.id)}>
-                            Deactivate
-                          </button>
+                        {(!d.user_id || d.active) && (
+                          <RowMenu label={`Actions for ${d.full_name}`}>
+                            {!d.user_id && (
+                              <MenuItem onClick={() => openLoginModal(d)}>
+                                Create portal login
+                              </MenuItem>
+                            )}
+                            {d.active && (
+                              <MenuItem danger onClick={() => deactivate(d.id)}>
+                                Deactivate
+                              </MenuItem>
+                            )}
+                          </RowMenu>
                         )}
                       </div>
                     </td>
@@ -284,6 +332,54 @@ export default function AdminDoctors() {
             </label>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={!!loginFor}
+        title={`Create login for ${loginFor?.full_name || ''}`}
+        onClose={() => setLoginFor(null)}
+        footer={
+          <>
+            <button className="btn secondary" onClick={() => setLoginFor(null)}>
+              Go back
+            </button>
+            <button
+              className="btn"
+              disabled={!loginEmail.trim() || loginPassword.length < 6 || busy}
+              onClick={createLogin}
+            >
+              <KeyRound className="lucide in-btn" />
+              {busy ? 'Creating…' : 'Create login'}
+            </button>
+          </>
+        }
+      >
+        {loginError && <div className="alert error">{loginError}</div>}
+        <p className="muted small">
+          Gives this physician access to their portal: schedule, patient charts, prescriptions,
+          and refill requests. Share the password with them securely and have them change it.
+        </p>
+        <div className="field">
+          <label htmlFor="l-email">Login email</label>
+          <input
+            className="input"
+            type="email"
+            id="l-email"
+            value={loginEmail}
+            onChange={(e) => setLoginEmail(e.target.value)}
+          />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="l-password">Temporary password (min 6 characters)</label>
+          <input
+            className="input"
+            type="text"
+            id="l-password"
+            autoComplete="off"
+            value={loginPassword}
+            onChange={(e) => setLoginPassword(e.target.value)}
+          />
+        </div>
       </Modal>
     </div>
   );

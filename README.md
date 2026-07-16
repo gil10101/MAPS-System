@@ -30,18 +30,35 @@ a single service.
 - Search doctors by name or specialty
 - See a doctor's real-time available time slots for any date
 - Book an appointment, with **double-booking prevention**
-- View appointment history and cancel upcoming appointments
+- Confirm attendance, view history, and cancel upcoming appointments
+- **Health record**: medical history (self-reported entries flagged as such),
+  medications with refill requests, test results, and doctors' visit notes
+
+**Physicians** (role `doctor`, linked to their directory entry)
+- Day-by-day schedule; complete visits by **signing a clinical note**
+  (a note is required — no undocumented visits)
+- Patient charts for everyone under their care: demographics, history,
+  medications, results, and the whole care team's visit notes
+- Prescribe and stop medications (stopping requires a reason)
+- Approve/deny refill requests on their own prescriptions (denials require a
+  note to the patient); approving dispenses one refill
+- Order tests and enter results with a normal/abnormal/critical flag
 
 **Clinic administrators**
-- Add, edit, and deactivate physicians and their specialties
+- Add, edit, and deactivate physicians; create their portal logins
 - View and filter all appointments by status, patient reply, physician, or date
 - Record visit outcomes: completed, cancelled, or didn't attend — the last two
   require a reason, which is what the reports are built from
 - Operational reports: appointment volume, physician utilization, no-show rate,
   cancellation rate, and status breakdown
 
-Administrators deliberately **cannot** approve a booking or mark a patient as
-confirmed — see "Appointment model" below.
+Two deliberate walls, both enforced server-side:
+- Administrators **cannot** approve bookings or mark a patient confirmed — see
+  "Appointment model" below.
+- Administrators **cannot** read clinical data (visit notes, history,
+  medications, results). Scheduling has no need-to-know; admin endpoints never
+  return those columns. Doctors, in turn, only open charts of patients they
+  share a non-cancelled appointment with (their care relationship).
 
 ---
 
@@ -75,6 +92,9 @@ npm start                  # serve everything on http://localhost:3000
 |---------|----------------------|--------------|
 | Admin   | `admin@maps.health`  | `admin123`   |
 | Patient | `jdoe@example.com`   | `patient123` |
+| Doctor  | `mreid@maps.health`  | `doctor123`  |
+
+Every seeded physician has a login: their directory email with `doctor123`.
 
 ### Development mode (hot reload)
 
@@ -197,7 +217,7 @@ Register/Login                    Authenticated request
 password ──bcrypt──▶ hash in DB   Authorization: Bearer <JWT>
 credentials ──▶ verify ──▶ JWT            │
       ◀────────── token ◀─┘        requireAuth ─▶ verify signature/expiry
-                                   requireRole ─▶ patient | admin
+                                   requireRole ─▶ patient | doctor | admin
                                         │
                                    route handler (req.user)
 ```
@@ -260,7 +280,25 @@ All `/api` routes return JSON. Authenticated routes expect an
 | PATCH  | `/api/appointments/:id/confirm`       | patient | Confirm they'll attend        |
 | PATCH  | `/api/appointments/:id/cancel`        | patient | Cancel own appointment (+reason) |
 | GET/PUT| `/api/patients/me`                    | patient | Read / update profile         |
+| GET/POST | `/api/patients/me/history`          | patient | Own history / self-report an entry |
+| GET    | `/api/patients/me/prescriptions`      | patient | Own medications               |
+| POST   | `/api/patients/me/prescriptions/:id/refill-request` | patient | Ask for a refill |
+| GET    | `/api/patients/me/test-results`       | patient | Own test results              |
+| GET    | `/api/doctor/me`                      | doctor  | Own physician profile         |
+| GET    | `/api/doctor/appointments`            | doctor  | Own schedule (`date`, `status`) |
+| PATCH  | `/api/doctor/appointments/:id/complete` | doctor | Complete a visit (note required) |
+| PATCH  | `/api/doctor/appointments/:id/note`   | doctor  | Amend a completed visit's note |
+| GET    | `/api/doctor/patients`                | doctor  | Patients under their care     |
+| GET    | `/api/doctor/patients/:id/chart`      | doctor  | Full chart (care relationship required) |
+| POST   | `/api/doctor/patients/:id/history`    | doctor  | Add a chart entry             |
+| PATCH  | `/api/doctor/history/:id`             | doctor  | Mark entry active/resolved    |
+| POST   | `/api/doctor/patients/:id/prescriptions` | doctor | Prescribe                   |
+| PATCH  | `/api/doctor/prescriptions/:id/stop`  | doctor  | Stop a medication (+reason)   |
+| GET/PATCH | `/api/doctor/refill-requests[/:id]` | doctor | Review / approve / deny refills |
+| POST   | `/api/doctor/patients/:id/test-results` | doctor | Order a test                 |
+| PATCH  | `/api/doctor/test-results/:id`        | doctor  | Enter a result (+flag)        |
 | GET/POST/PUT/DELETE | `/api/admin/doctors`     | admin   | Manage physicians             |
+| POST   | `/api/admin/doctors/:id/account`      | admin   | Create a physician's login    |
 | GET    | `/api/admin/appointments`             | admin   | All appointments (filterable) |
 | PATCH  | `/api/admin/appointments/:id/status`  | admin   | Record outcome: completed / cancelled / no_show |
 | GET    | `/api/admin/reports/summary`          | admin   | Headline metrics              |
