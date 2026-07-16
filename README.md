@@ -1,9 +1,9 @@
 # MAPS — Medical Appointment & Patient Scheduling System
 
 A web-based appointment scheduling platform for outpatient clinics and medical
-offices. Patients create accounts, search for doctors, and book appointments;
-clinic administrators manage physicians, approve or cancel bookings, and view
-operational reports.
+offices. Patients create accounts, search for doctors, and book appointments
+directly into open slots; clinic administrators manage physicians, record how
+visits ended, and view operational reports.
 
 > **CIS 9590 group project** — Liu Maggie · Lopez Raylene · Lu Gil · Mammadov Mehdi
 
@@ -34,9 +34,14 @@ a single service.
 
 **Clinic administrators**
 - Add, edit, and deactivate physicians and their specialties
-- View and filter all appointments; approve, complete, or cancel them
-- Operational reports: appointment volume, physician utilization,
+- View and filter all appointments by status, patient reply, physician, or date
+- Record visit outcomes: completed, cancelled, or didn't attend — the last two
+  require a reason, which is what the reports are built from
+- Operational reports: appointment volume, physician utilization, no-show rate,
   cancellation rate, and status breakdown
+
+Administrators deliberately **cannot** approve a booking or mark a patient as
+confirmed — see "Appointment model" below.
 
 ---
 
@@ -93,6 +98,62 @@ produces the single-server production setup.
 | `npm run build`      | Install client deps + build React app to `client/dist` |
 | `npm run seed`       | Create schema + demo data (skips if data exists) |
 | `npm run reset-db`   | Wipe all tables and re-seed from scratch         |
+| `npm run migrate`    | Apply pending schema migrations to an existing DB |
+| `npm run migrate -- --status` | List applied vs pending migrations, change nothing |
+
+> **Existing database?** Run `npm run migrate` once after pulling. Fresh
+> databases get the current shape from `schema.sql` and need nothing.
+
+---
+
+## Appointment model (two axes, not one)
+
+The most common way to get clinic software wrong is to model appointments with
+a single status running `pending → confirmed → completed`. This project used to
+do that. It's wrong in a way worth explaining, because the mistake looks
+sensible until you compare it to a real system.
+
+**There is no approval step.** A booking is live the moment the patient makes
+it. HL7 FHIR — the interop standard every EHR maps to — defines `booked` as
+*"confirmed to go ahead at the date/times specified."* Epic calls its
+self-scheduling flow Direct Scheduling: *"Patients choose their appointment day
+and time without any interaction from staff."* No admin sits in a queue
+approving bookings, so there is no status for it and no button to press.
+
+**"Confirmed" means the patient replied to a reminder** — not that a supervisor
+signed off. That's patient-driven and completely independent of where the visit
+sits in its lifecycle, so athenahealth models it as a *separate field*. Folding
+it into `status` is what made the old `confirmed` ambiguous: it couldn't
+express "booked, but the patient hasn't answered yet" — exactly the appointments
+a front desk chases.
+
+So there are two independent columns:
+
+| `status` (lifecycle — staff and time drive it) | `confirmation_status` (the patient drives it) |
+|---|---|
+| `booked` → `completed` | `unconfirmed` |
+| `booked` → `cancelled` (+ reason + who) | `confirmed` |
+| `booked` → `no_show` (+ reason) | `cancel_requested` |
+
+Consequences that fall out of this, enforced in `src/routes/`:
+
+- **Staff cannot set `confirmation_status`.** Only the patient can, via
+  `PATCH /api/appointments/:id/confirm`. Letting staff forge it would
+  manufacture the exact data the field exists to measure.
+- **Staff cannot set `status` back to `booked`.** There's no approval to give
+  and no un-cancelling — matching Epic, where *"you cannot undo an appointment
+  cancellation... you must create a new appointment to replace it."*
+- **Cancelling and no-showing require a reason**, and cancellations record
+  `cancelled_by` (`patient` or `practice`). A bare status flip throws away the
+  only thing the practice reports on. This is why `no_show_rate` is possible at
+  all — the old model had nowhere to put a missed visit.
+
+`no_show_rate` is measured against appointments that came due (kept + missed),
+not every row ever created: a booking three weeks out hasn't had the chance to
+be missed yet, and counting it would dilute the rate toward zero.
+
+See `src/db/migrations/001_split_confirmation_from_lifecycle.sql` for the
+migration and its rollback.
 
 ---
 
@@ -196,11 +257,12 @@ All `/api` routes return JSON. Authenticated routes expect an
 | GET    | `/api/doctors/:id/availability?date=` | patient | Open slots for a date         |
 | GET    | `/api/appointments`                   | patient | Own appointments              |
 | POST   | `/api/appointments`                   | patient | Book an appointment           |
-| PATCH  | `/api/appointments/:id/cancel`        | patient | Cancel own appointment        |
+| PATCH  | `/api/appointments/:id/confirm`       | patient | Confirm they'll attend        |
+| PATCH  | `/api/appointments/:id/cancel`        | patient | Cancel own appointment (+reason) |
 | GET/PUT| `/api/patients/me`                    | patient | Read / update profile         |
 | GET/POST/PUT/DELETE | `/api/admin/doctors`     | admin   | Manage physicians             |
 | GET    | `/api/admin/appointments`             | admin   | All appointments (filterable) |
-| PATCH  | `/api/admin/appointments/:id/status`  | admin   | Approve / complete / cancel   |
+| PATCH  | `/api/admin/appointments/:id/status`  | admin   | Record outcome: completed / cancelled / no_show |
 | GET    | `/api/admin/reports/summary`          | admin   | Headline metrics              |
 | GET    | `/api/admin/reports/physician-utilization` | admin | Per-doctor counts       |
 | GET    | `/api/admin/reports/volume-by-specialty`   | admin | Volume per specialty    |

@@ -125,18 +125,31 @@ async function seed() {
     }
 
     // --- Sample appointments ---------------------------------------------------
-    // A few upcoming + past appointments so dashboards/reports aren't empty.
+    // Covers every lifecycle state and both confirmation states, so dashboards
+    // and the no-show report have something real to show.
+    // Columns: patient, doctor, date, time, reason, status, confirmation, cancel_reason, cancelled_by
     const appts = [
-      [patientIds[0], doctorIds[0], '2026-07-20', '09:30', 'Annual checkup', 'confirmed'],
-      [patientIds[0], doctorIds[1], '2026-07-22', '13:30', 'Blood pressure follow-up', 'pending'],
-      [patientIds[1], doctorIds[2], '2026-07-21', '10:00', 'Skin rash consultation', 'confirmed'],
-      [patientIds[1], doctorIds[0], '2026-06-15', '11:00', 'Flu symptoms', 'completed'],
-      [patientIds[0], doctorIds[3], '2026-06-10', '14:00', 'Consultation', 'cancelled'],
+      // Booked and confirmed — patient answered a reminder.
+      [patientIds[0], doctorIds[0], '2026-07-20', '09:30', 'Annual checkup', 'booked', 'confirmed', null, null],
+      [patientIds[1], doctorIds[2], '2026-07-21', '10:00', 'Skin rash consultation', 'booked', 'confirmed', null, null],
+      // Booked but silent — the ones a front desk actually chases.
+      [patientIds[0], doctorIds[1], '2026-07-22', '13:30', 'Blood pressure follow-up', 'booked', 'unconfirmed', null, null],
+      [patientIds[0], doctorIds[4], '2026-07-28', '15:00', 'Knee pain', 'booked', 'unconfirmed', null, null],
+      // Past: kept, missed, and cancelled by each side.
+      [patientIds[1], doctorIds[0], '2026-06-15', '11:00', 'Flu symptoms', 'completed', 'confirmed', null, null],
+      [patientIds[0], doctorIds[3], '2026-06-10', '14:00', 'Consultation', 'cancelled', 'unconfirmed', 'Patient cancelled — schedule conflict', 'patient'],
+      [patientIds[1], doctorIds[1], '2026-06-24', '09:00', 'Cardiology review', 'cancelled', 'confirmed', 'Provider unavailable — clinic rescheduled', 'practice'],
+      [patientIds[0], doctorIds[2], '2026-06-30', '16:00', 'Mole check', 'no_show', 'unconfirmed', 'Did not attend, no contact', null],
     ];
     for (const a of appts) {
       await q(
-        `INSERT INTO appointments (patient_id, doctor_id, appt_date, appt_time, reason, status)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO appointments
+           (patient_id, doctor_id, appt_date, appt_time, reason, status,
+            confirmation_status, cancel_reason, cancelled_by,
+            confirmed_at, cancelled_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                 CASE WHEN $7 = 'confirmed' THEN now() END,
+                 CASE WHEN $6 = 'cancelled' THEN now() END)`,
         a
       );
     }

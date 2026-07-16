@@ -48,9 +48,9 @@ router.get(
     const { status } = req.query;
     let filtered = rows;
     if (status === 'upcoming') {
-      filtered = rows.filter((r) => r.status !== 'cancelled' && r.status !== 'completed');
+      filtered = rows.filter((r) => r.status === 'booked');
     } else if (status === 'past') {
-      filtered = rows.filter((r) => r.status === 'completed' || r.status === 'cancelled');
+      filtered = rows.filter((r) => r.status !== 'booked');
     } else if (status) {
       filtered = rows.filter((r) => r.status === status);
     }
@@ -100,9 +100,14 @@ router.post(
     }
 
     try {
+      // Booked immediately — no approval queue. The slot is held the moment the
+      // patient takes it; the clinic does not vet the booking afterwards.
+      // The patient has not yet acknowledged a reminder, so confirmation starts
+      // at 'unconfirmed' on its own axis.
       const inserted = await db.one(
-        `INSERT INTO appointments (patient_id, doctor_id, appt_date, appt_time, reason, status)
-         VALUES ($1, $2, $3, $4, $5, 'pending') RETURNING id`,
+        `INSERT INTO appointments
+           (patient_id, doctor_id, appt_date, appt_time, reason, status, confirmation_status)
+         VALUES ($1, $2, $3, $4, $5, 'booked', 'unconfirmed') RETURNING id`,
         [patient.id, doctor_id, appt_date, appt_time, reason || null]
       );
       const appt = await db.one(`${DETAIL_SELECT} WHERE a.id = $1`, [inserted.id]);
@@ -137,7 +142,45 @@ router.get(
 );
 
 /**
+ * PATCH /api/appointments/:id/confirm — the patient confirms they will attend.
+ *
+ * This is the real meaning of "confirmed" in a clinic system: the patient
+ * responded to a reminder. In production this would be driven by an SMS/email
+ * reply; here the patient taps a button. Either way the actor is the patient,
+ * never staff — which is why it lives on the patient router and moves
+ * confirmation_status only, leaving the lifecycle status untouched.
+ */
+router.patch(
+  '/:id/confirm',
+  requireAuth,
+  requireRole('patient'),
+  wrap(async (req, res) => {
+    const patient = await patientForUser(req.user.id);
+    const appt = await db.one('SELECT * FROM appointments WHERE id = $1', [req.params.id]);
+    if (!patient || !appt || appt.patient_id !== patient.id) {
+      return res.status(404).json({ error: 'Appointment not found.' });
+    }
+    if (appt.status !== 'booked') {
+      return res.status(400).json({ error: 'Only an upcoming appointment can be confirmed.' });
+    }
+    await db.query(
+      `UPDATE appointments
+       SET confirmation_status = 'confirmed', confirmed_at = now(), updated_at = now()
+       WHERE id = $1`,
+      [appt.id]
+    );
+    res.json({ appointment: await db.one(`${DETAIL_SELECT} WHERE a.id = $1`, [appt.id]) });
+  })
+);
+
+/**
  * PATCH /api/appointments/:id/cancel — patient cancels their own appointment.
+ * Body: { reason? }
+ *
+ * Records who cancelled and why. Cancellation is terminal and not undoable —
+ * matching Epic, where "you cannot undo an appointment cancellation... you must
+ * create a new appointment to replace it". Re-opening a cancelled row would
+ * also race the partial unique index if the slot were taken meanwhile.
  */
 router.patch(
   '/:id/cancel',
@@ -149,15 +192,22 @@ router.patch(
     if (!patient || !appt || appt.patient_id !== patient.id) {
       return res.status(404).json({ error: 'Appointment not found.' });
     }
-    if (appt.status === 'cancelled') {
-      return res.status(400).json({ error: 'Appointment is already cancelled.' });
+    if (appt.status !== 'booked') {
+      return res.status(400).json({
+        error:
+          appt.status === 'cancelled'
+            ? 'Appointment is already cancelled.'
+            : 'Only an upcoming appointment can be cancelled.',
+      });
     }
-    if (appt.status === 'completed') {
-      return res.status(400).json({ error: 'Completed appointments cannot be cancelled.' });
-    }
+
+    const reason = (req.body || {}).reason;
     await db.query(
-      `UPDATE appointments SET status = 'cancelled', updated_at = now() WHERE id = $1`,
-      [appt.id]
+      `UPDATE appointments
+       SET status = 'cancelled', cancelled_by = 'patient', cancel_reason = $2,
+           cancelled_at = now(), updated_at = now()
+       WHERE id = $1`,
+      [appt.id, (reason && String(reason).trim()) || null]
     );
     const updated = await db.one(`${DETAIL_SELECT} WHERE a.id = $1`, [appt.id]);
     res.json({ appointment: updated });

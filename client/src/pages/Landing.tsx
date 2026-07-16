@@ -11,8 +11,8 @@ const FEATURES = [
   },
   {
     icon: Calendar,
-    title: 'Book & manage online',
-    text: 'Pick an open time slot, review your appointment history, and cancel when plans change.',
+    title: 'Booked on the spot',
+    text: 'Pick an open slot and it is yours immediately — no waiting on the clinic to approve it.',
   },
   {
     icon: Ban,
@@ -22,12 +22,12 @@ const FEATURES = [
   {
     icon: Stethoscope,
     title: 'Clinic administration',
-    text: 'Staff manage physician schedules and approve or cancel appointments with ease.',
+    text: 'Staff manage physician schedules, record visit outcomes, and follow up on missed visits.',
   },
   {
     icon: BarChart3,
     title: 'Operational reports',
-    text: 'Track appointment volume, physician utilization, and cancellation rates.',
+    text: 'Track appointment volume, physician utilization, no-show and cancellation rates.',
   },
   {
     icon: Shield,
@@ -66,8 +66,8 @@ export default function Landing() {
           <h1>Book your care in minutes, not phone calls.</h1>
           <p className="lead">
             MAPS is a scheduling platform for outpatient clinics. Patients find the right doctor
-            and book online; clinic staff manage schedules, approvals, and reporting — all in one
-            place.
+            and book online; clinic staff manage schedules, track attendance, and report — all in
+            one place.
           </p>
           <div className="cta">
             <Link to="/register" className="btn">

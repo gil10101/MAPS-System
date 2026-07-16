@@ -124,7 +124,7 @@ export default function AdminDoctors() {
         </button>
       </div>
 
-      <div className="card">
+      <div className="card table-stack">
         {error && <div className="alert error">{error}</div>}
         {!doctors && !error && <Spinner />}
         {doctors && doctors.length === 0 && (
@@ -148,11 +148,11 @@ export default function AdminDoctors() {
               <tbody>
                 {doctors.map((d) => (
                   <tr key={d.id}>
-                    <td>
+                    <td data-label="Name">
                       <strong>{d.full_name}</strong>
                     </td>
-                    <td className="muted">{d.specialty_name || '—'}</td>
-                    <td className="muted small">
+                    <td data-label="Specialty" className="muted">{d.specialty_name || '—'}</td>
+                    <td data-label="Contact" className="muted small">
                       {d.email || ''}
                       {d.phone && (
                         <>
@@ -161,16 +161,16 @@ export default function AdminDoctors() {
                         </>
                       )}
                     </td>
-                    <td>{d.room || '—'}</td>
-                    <td>
+                    <td data-label="Room">{d.room || '—'}</td>
+                    <td data-label="Status">
                       {d.active ? (
                         <span className="badge completed">Active</span>
                       ) : (
                         <span className="badge cancelled">Inactive</span>
                       )}
                     </td>
-                    <td>
-                      <div className="row" style={{ gap: 4 }}>
+                    <td className="actions">
+                      <div className="row tight" style={{ justifyContent: 'flex-end' }}>
                         <button className="btn secondary sm" onClick={() => openModal(d)}>
                           Edit
                         </button>

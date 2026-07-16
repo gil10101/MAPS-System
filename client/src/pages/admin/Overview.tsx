@@ -45,10 +45,10 @@ export default function Overview() {
   const a = summary?.appointments;
   const statusItems: Array<[string, number]> = a
     ? [
-        ['Pending', a.pending],
-        ['Confirmed', a.confirmed],
+        ['Booked', a.booked],
         ['Completed', a.completed],
         ['Cancelled', a.cancelled],
+        ["Didn't attend", a.no_show],
       ]
     : [];
   const statusMax = Math.max(1, ...statusItems.map(([, v]) => v));
@@ -68,6 +68,29 @@ export default function Overview() {
           <div className="value teal" id="s-total">{summary ? summary.appointments.total : '–'}</div>
           <div className="label">Total appointments</div>
         </div>
+        {/* No-show rate leads: it's the number clinics actually manage to, and
+            the one the old model couldn't express at all. */}
+        <div className="card stat">
+          <div className="value" id="s-noshow">
+            {summary ? `${summary.no_show_rate}%` : '–'}
+          </div>
+          <div className="label">No-show rate</div>
+        </div>
+        <div className="card stat">
+          <div className="value" id="s-cancel">
+            {summary ? `${summary.cancellation_rate}%` : '–'}
+          </div>
+          <div className="label">Cancellation rate</div>
+        </div>
+        <div className="card stat">
+          <div className="value" id="s-unconfirmed">
+            {summary ? summary.appointments.unconfirmed : '–'}
+          </div>
+          <div className="label">Awaiting patient reply</div>
+        </div>
+      </div>
+
+      <div className="grid cols-2">
         <div className="card stat">
           <div className="value">{summary ? summary.total_patients : '–'}</div>
           <div className="label">Registered patients</div>
@@ -75,12 +98,6 @@ export default function Overview() {
         <div className="card stat">
           <div className="value">{summary ? summary.active_doctors : '–'}</div>
           <div className="label">Active physicians</div>
-        </div>
-        <div className="card stat">
-          <div className="value" id="s-cancel">
-            {summary ? `${summary.cancellation_rate}%` : '–'}
-          </div>
-          <div className="label">Cancellation rate</div>
         </div>
       </div>
 
@@ -107,7 +124,7 @@ export default function Overview() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card table-stack">
         <div className="card-title">
           <h3>Physician utilization</h3>
         </div>
@@ -123,19 +140,21 @@ export default function Overview() {
                   <th>Upcoming</th>
                   <th>Completed</th>
                   <th>Cancelled</th>
+                  <th>No-shows</th>
                 </tr>
               </thead>
               <tbody>
                 {utilization.map((r) => (
                   <tr key={r.id}>
-                    <td>
+                    <td data-label="Physician">
                       <strong>{r.full_name}</strong>
                     </td>
-                    <td className="muted">{r.specialty_name || '—'}</td>
-                    <td>{r.total_appointments}</td>
-                    <td>{r.upcoming || 0}</td>
-                    <td>{r.completed || 0}</td>
-                    <td>{r.cancelled || 0}</td>
+                    <td data-label="Specialty" className="muted">{r.specialty_name || '—'}</td>
+                    <td data-label="Total">{r.total_appointments}</td>
+                    <td data-label="Upcoming">{r.upcoming || 0}</td>
+                    <td data-label="Completed">{r.completed || 0}</td>
+                    <td data-label="Cancelled">{r.cancelled || 0}</td>
+                    <td data-label="No-shows">{r.no_show || 0}</td>
                   </tr>
                 ))}
               </tbody>

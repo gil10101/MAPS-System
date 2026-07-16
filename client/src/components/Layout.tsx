@@ -10,6 +10,8 @@ interface NavItem {
   to: string;
   end?: boolean;
   label: string;
+  /** Tab-bar caption. Falls back to `label` when it already fits. */
+  short?: string;
   icon: LucideIcon;
 }
 interface NavGroup {
@@ -22,8 +24,8 @@ const PATIENT_NAV: NavGroup[] = [
     section: 'Scheduling',
     links: [
       { to: '/app', end: true, label: 'Dashboard', icon: Home },
-      { to: '/app/doctors', label: 'Find a Doctor', icon: Search },
-      { to: '/app/appointments', label: 'My Appointments', icon: Calendar },
+      { to: '/app/doctors', label: 'Find a Doctor', short: 'Doctors', icon: Search },
+      { to: '/app/appointments', label: 'My Appointments', short: 'Appts', icon: Calendar },
     ],
   },
   {
@@ -37,13 +39,17 @@ const ADMIN_NAV: NavGroup[] = [
     section: 'Clinic',
     links: [
       { to: '/admin', end: true, label: 'Overview', icon: LayoutGrid },
-      { to: '/admin/appointments', label: 'Appointments', icon: Calendar },
+      { to: '/admin/appointments', label: 'Appointments', short: 'Appts', icon: Calendar },
       { to: '/admin/doctors', label: 'Doctors', icon: Stethoscope },
     ],
   },
 ];
 
-/** App shell: navy background, sidebar, floating white content panel. */
+/**
+ * App shell. Phones get a top bar plus a bottom tab bar; tablets and up get the
+ * navy sidebar. Both navigations render from the same groups — CSS decides
+ * which is visible, so there is one source of truth for the routes.
+ */
 export default function Layout() {
   const user = getUser();
 
@@ -54,14 +60,29 @@ export default function Layout() {
 
   if (!user) return null; // Protected handles the redirect.
   const groups = user.role === 'admin' ? ADMIN_NAV : PATIENT_NAV;
+  const tabs = groups.flatMap((g) => g.links);
 
   return (
     <>
+      <header className="topbar">
+        <Link className="brand" to={homeFor(user)}>
+          MAP<b>S</b>
+        </Link>
+        <div className="topbar-right">
+          <span className="avatar sm" title={user.full_name}>
+            {initials(user.full_name)}
+          </span>
+          <button className="icon-btn" onClick={logout} aria-label="Log out">
+            <LogOut className="lucide" aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+
       <aside className="sidebar">
         <Link className="brand" to={homeFor(user)}>
           MAP<b>S</b>
         </Link>
-        <nav className="side-nav">
+        <nav className="side-nav" aria-label="Main">
           {groups.map((g) => (
             <div className="side-group" key={g.section}>
               <div className="side-section">{g.section}</div>
@@ -92,9 +113,24 @@ export default function Layout() {
           </button>
         </div>
       </aside>
+
       <main className="page">
         <Outlet />
       </main>
+
+      <nav className="tabbar" aria-label="Main">
+        {tabs.map((l) => (
+          <NavLink
+            key={l.to}
+            to={l.to}
+            end={l.end}
+            className={({ isActive }) => `tab-link${isActive ? ' active' : ''}`}
+          >
+            <l.icon className="lucide" aria-hidden="true" />
+            <span className="label">{l.short || l.label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </>
   );
 }

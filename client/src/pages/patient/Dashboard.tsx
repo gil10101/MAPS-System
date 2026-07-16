@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Calendar, Plus } from 'lucide-react';
 import { api, formatDate, formatTime, getUser, initials, type Appointment } from '../../lib/api';
-import { Badge, Empty, Spinner } from '../../components/ui';
+import { ConfirmBadge, Empty, Spinner } from '../../components/ui';
 
 export default function Dashboard() {
   const user = getUser();
@@ -16,7 +16,7 @@ export default function Dashboard() {
   }, []);
 
   const upcoming = (appointments || [])
-    .filter((a) => a.status === 'pending' || a.status === 'confirmed')
+    .filter((a) => a.status === 'booked')
     .sort((a, b) => (a.appt_date + a.appt_time).localeCompare(b.appt_date + b.appt_time));
   const completed = (appointments || []).filter((a) => a.status === 'completed');
 
@@ -67,14 +67,10 @@ export default function Dashboard() {
           </Empty>
         )}
         {upcoming.map((a) => (
-          <div
-            key={a.id}
-            className="row between"
-            style={{ padding: '12px 0', borderBottom: '1px solid var(--line)' }}
-          >
-            <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+          <div key={a.id} className="appt-row">
+            <div className="who">
               <div className="avatar">{initials(a.doctor_name)}</div>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <strong>{a.doctor_name}</strong>
                 <div className="muted small">
                   {a.specialty_name || ''}
@@ -82,10 +78,11 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
+            <div className="when">
               <div>{formatDate(a.appt_date)}</div>
-              <div className="muted small">
-                {formatTime(a.appt_time)} · <Badge status={a.status} />
+              <div className="muted small">{formatTime(a.appt_time)}</div>
+              <div className="badge-stack" style={{ marginTop: 'var(--s1)' }}>
+                <ConfirmBadge status={a.status} confirmation={a.confirmation_status} />
               </div>
             </div>
           </div>

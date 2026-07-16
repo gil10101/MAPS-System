@@ -5,7 +5,57 @@
 // ---------- Types ----------------------------------------------------------
 
 export type Role = 'patient' | 'admin';
-export type ApptStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
+
+/**
+ * Where the visit sits in its lifecycle. There is no "pending": a booking is
+ * live the moment it's made, so nothing waits on staff approval.
+ */
+export type ApptStatus = 'booked' | 'completed' | 'cancelled' | 'no_show';
+
+/** Whether the PATIENT has acknowledged the appointment. Independent of status. */
+export type ConfirmationStatus = 'unconfirmed' | 'confirmed' | 'cancel_requested';
+
+export type CancelledBy = 'patient' | 'practice' | 'unknown';
+
+/**
+ * Display text. The DB enum is storage, not user-facing copy — "Didn't attend"
+ * tells someone what happened; "no_show" is a column value that leaked.
+ */
+export const STATUS_LABEL: Record<ApptStatus, string> = {
+  booked: 'Booked',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  no_show: "Didn't attend",
+};
+
+export const CONFIRMATION_LABEL: Record<ConfirmationStatus, string> = {
+  unconfirmed: 'Not confirmed',
+  confirmed: 'Confirmed by patient',
+  cancel_requested: 'Cancellation requested',
+};
+
+/** Preset cancellation reasons; the clinic's are distinct from the patient's. */
+export const PRACTICE_CANCEL_REASONS = [
+  'Provider unavailable',
+  'Clinic closure',
+  'Rescheduled at patient request',
+  'Duplicate booking',
+  'Booked in error',
+];
+
+export const PATIENT_CANCEL_REASONS = [
+  'Schedule conflict',
+  'Feeling better / no longer needed',
+  'Transport or access problem',
+  'Cost or insurance concern',
+  'Booking another time',
+];
+
+export const NO_SHOW_REASONS = [
+  'Did not attend, no contact',
+  'Arrived too late to be seen',
+  'Patient called after the fact',
+];
 
 export interface User {
   id: number;
@@ -40,6 +90,11 @@ export interface Appointment {
   appt_time: string; // 'HH:MM'
   reason: string | null;
   status: ApptStatus;
+  confirmation_status: ConfirmationStatus;
+  confirmed_at: string | null;
+  cancel_reason: string | null;
+  cancelled_by: CancelledBy | null;
+  cancelled_at: string | null;
   notes: string | null;
   doctor_name: string;
   doctor_room?: string | null;
@@ -63,12 +118,15 @@ export interface Profile {
 export interface Summary {
   appointments: {
     total: number;
-    pending: number;
-    confirmed: number;
+    booked: number;
     completed: number;
     cancelled: number;
+    no_show: number;
+    unconfirmed: number;
   };
   cancellation_rate: number;
+  /** Missed / (kept + missed) — future bookings can't have been missed yet. */
+  no_show_rate: number;
   total_patients: number;
   active_doctors: number;
 }
@@ -80,6 +138,7 @@ export interface Utilization {
   total_appointments: number;
   completed: number;
   cancelled: number;
+  no_show: number;
   upcoming: number;
 }
 

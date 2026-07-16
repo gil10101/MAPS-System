@@ -10,7 +10,8 @@
     "dev:client": "npm --prefix client run dev",
     "build": "npm --prefix client install && npm --prefix client run build",
     "seed": "node src/db/seed.js",
-    "reset-db": "node src/db/seed.js --reset"
+    "reset-db": "node src/db/seed.js --reset",
+    "migrate": "node src/db/migrate.js"
   },
   "keywords": [
     "healthcare",

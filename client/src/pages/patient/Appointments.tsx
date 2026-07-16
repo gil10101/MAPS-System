@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Plus } from 'lucide-react';
-import { api, formatDate, formatTime, type Appointment } from '../../lib/api';
-import { Badge, Empty, Spinner } from '../../components/ui';
+import { Calendar, Check, Plus } from 'lucide-react';
+import {
+  api, formatDate, formatTime, PATIENT_CANCEL_REASONS, type Appointment,
+} from '../../lib/api';
+import { Badge, ConfirmBadge, Empty, ReasonModal, Spinner } from '../../components/ui';
 import { useToast } from '../../components/Toast';
 
 type Filter = 'all' | 'upcoming' | 'past';
@@ -12,6 +14,8 @@ export default function Appointments() {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [error, setError] = useState('');
+  const [cancelling, setCancelling] = useState<Appointment | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api<{ appointments: Appointment[] }>('/appointments')
@@ -22,19 +26,37 @@ export default function Appointments() {
   useEffect(load, [load]);
 
   const visible = (appointments || []).filter((a) => {
-    if (filter === 'upcoming') return a.status === 'pending' || a.status === 'confirmed';
-    if (filter === 'past') return a.status === 'completed' || a.status === 'cancelled';
+    if (filter === 'upcoming') return a.status === 'booked';
+    if (filter === 'past') return a.status !== 'booked';
     return true;
   });
 
-  async function cancelAppt(id: number) {
-    if (!window.confirm('Cancel this appointment? This cannot be undone.')) return;
+  const awaiting = (appointments || []).filter(
+    (a) => a.status === 'booked' && a.confirmation_status === 'unconfirmed'
+  );
+
+  async function confirmAttendance(a: Appointment) {
     try {
-      await api(`/appointments/${id}/cancel`, { method: 'PATCH' });
-      toast('Appointment cancelled.', 'success');
+      await api(`/appointments/${a.id}/confirm`, { method: 'PATCH' });
+      toast('Thanks — your appointment is confirmed.', 'success');
       load();
     } catch (err) {
       toast((err as Error).message, 'error');
+    }
+  }
+
+  async function submitCancel(reason: string) {
+    if (!cancelling) return;
+    setBusy(true);
+    try {
+      await api(`/appointments/${cancelling.id}/cancel`, { method: 'PATCH', body: { reason } });
+      toast('Appointment cancelled.', 'success');
+      setCancelling(null);
+      load();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -44,7 +66,7 @@ export default function Appointments() {
         <div>
           <h1>My appointments</h1>
           <p className="muted" style={{ margin: 0 }}>
-            Review, track, and cancel your bookings.
+            Confirm, review, and cancel your bookings.
           </p>
         </div>
         <Link to="/app/doctors" className="btn">
@@ -52,8 +74,21 @@ export default function Appointments() {
         </Link>
       </div>
 
-      <div className="card">
-        <div className="row" style={{ gap: 8, marginBottom: 16 }}>
+      {/* The nudge a reminder text would send. Confirmation is the patient's to
+          give, so it's surfaced here rather than on a staff screen. */}
+      {awaiting.length > 0 && (
+        <div className="alert info" style={{ marginBottom: 0 }}>
+          <strong>
+            {awaiting.length === 1
+              ? 'One appointment needs confirming.'
+              : `${awaiting.length} appointments need confirming.`}
+          </strong>{' '}
+          Letting the clinic know you're coming frees the slot for someone else if you're not.
+        </div>
+      )}
+
+      <div className="card table-stack">
+        <div className="row tight" style={{ marginBottom: 'var(--s4)' }}>
           {(['all', 'upcoming', 'past'] as Filter[]).map((f) => (
             <button
               key={f}
@@ -85,29 +120,45 @@ export default function Appointments() {
                   <th>Time</th>
                   <th>Reason</th>
                   <th>Status</th>
-                  <th></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((a) => {
-                  const canCancel = a.status === 'pending' || a.status === 'confirmed';
+                  const upcoming = a.status === 'booked';
+                  const needsReply = upcoming && a.confirmation_status === 'unconfirmed';
                   return (
                     <tr key={a.id}>
-                      <td>
+                      <td data-label="Doctor">
                         <strong>{a.doctor_name}</strong>
                         <div className="muted small">{a.specialty_name || ''}</div>
                       </td>
-                      <td>{formatDate(a.appt_date)}</td>
-                      <td>{formatTime(a.appt_time)}</td>
-                      <td className="muted">{a.reason || '—'}</td>
-                      <td>
-                        <Badge status={a.status} />
+                      <td data-label="Date" className="nowrap">{formatDate(a.appt_date)}</td>
+                      <td data-label="Time" className="nowrap">{formatTime(a.appt_time)}</td>
+                      <td data-label="Reason" className="muted">{a.reason || '—'}</td>
+                      <td data-label="Status">
+                        <div className="badge-stack">
+                          <Badge status={a.status} />
+                          <ConfirmBadge status={a.status} confirmation={a.confirmation_status} />
+                          {a.cancel_reason && a.cancelled_by !== 'unknown' && (
+                            <span className="muted small">{a.cancel_reason}</span>
+                          )}
+                        </div>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
-                        {canCancel && (
-                          <button className="btn danger sm" onClick={() => cancelAppt(a.id)}>
-                            Cancel
-                          </button>
+                      <td className="actions">
+                        {upcoming ? (
+                          <div className="action-group">
+                            {needsReply && (
+                              <button className="btn sm" onClick={() => confirmAttendance(a)}>
+                                <Check className="lucide in-btn" /> I'll be there
+                              </button>
+                            )}
+                            <button className="btn danger sm" onClick={() => setCancelling(a)}>
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="muted small">—</span>
                         )}
                       </td>
                     </tr>
@@ -118,6 +169,25 @@ export default function Appointments() {
           </div>
         )}
       </div>
+
+      <ReasonModal
+        open={!!cancelling}
+        busy={busy}
+        title="Cancel appointment"
+        presets={PATIENT_CANCEL_REASONS}
+        confirmLabel="Cancel appointment"
+        intro={
+          cancelling && (
+            <p className="muted small">
+              {cancelling.doctor_name} on {formatDate(cancelling.appt_date)} at{' '}
+              {formatTime(cancelling.appt_time)}. This cannot be undone — you'll need to book a
+              new time.
+            </p>
+          )
+        }
+        onCancel={() => setCancelling(null)}
+        onConfirm={submitCancel}
+      />
     </div>
   );
 }

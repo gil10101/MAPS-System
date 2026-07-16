@@ -72,7 +72,23 @@ CREATE TABLE IF NOT EXISTS doctor_schedules (
 
 -- ----------------------------------------------------------------------------
 -- appointments: a booking between a patient and a doctor at a point in time.
--- status: pending -> confirmed / cancelled / completed
+--
+-- Two INDEPENDENT axes — see migrations/001 for the full rationale:
+--
+--   status  (lifecycle, staff/time-driven, aligned to HL7 FHIR)
+--       booked ──┬──► completed              (patient was seen)
+--                ├──► cancelled              (+ reason + who, terminal)
+--                └──► no_show                (never arrived, terminal)
+--     There is deliberately no "pending"/approval state: booking is atomic and
+--     self-confirming, exactly as FHIR's `booked` ("confirmed to go ahead")
+--     and Epic's Direct Scheduling define it. No clinic supervisor approves
+--     individual bookings, so no status models one.
+--
+--   confirmation_status  (patient-driven, orthogonal)
+--       unconfirmed ──► confirmed         (patient acknowledged a reminder)
+--                   └─► cancel_requested  (patient asked to cancel)
+--     A visit can be booked-and-unconfirmed; those are the ones a front desk
+--     chases. Folding this into `status` is what made "confirmed" ambiguous.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS appointments (
     id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -81,21 +97,35 @@ CREATE TABLE IF NOT EXISTS appointments (
     appt_date  DATE NOT NULL,
     appt_time  VARCHAR(5) NOT NULL,     -- slot start, 'HH:MM'
     reason     TEXT,
-    status     TEXT NOT NULL DEFAULT 'pending'
-               CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
+    status     TEXT NOT NULL DEFAULT 'booked'
+               CHECK (status IN ('booked', 'completed', 'cancelled', 'no_show')),
+
+    confirmation_status TEXT NOT NULL DEFAULT 'unconfirmed'
+               CHECK (confirmation_status IN ('unconfirmed', 'confirmed', 'cancel_requested')),
+    confirmed_at TIMESTAMPTZ,
+
+    -- Cancellations capture why and by whom: a bare status flip discards the
+    -- data practices actually report on (late-cancel vs practice-bumped).
+    cancel_reason TEXT,
+    cancelled_by  TEXT CHECK (cancelled_by IS NULL
+                              OR cancelled_by IN ('patient', 'practice', 'unknown')),
+    cancelled_at  TIMESTAMPTZ,
+
     notes      TEXT,                    -- clinical/visit notes (set on completion)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Prevent two active (non-cancelled) appointments for the same doctor/date/time.
--- Postgres partial unique index: cancelled appointments are excluded so a freed
--- slot can be re-booked.
+-- Prevent two live appointments for the same doctor/date/time. Cancelled ones
+-- are excluded so a freed slot can be re-booked; a no-show still consumed its
+-- slot, so it keeps blocking.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_no_double_book
     ON appointments (doctor_id, appt_date, appt_time)
-    WHERE status != 'cancelled';
+    WHERE status <> 'cancelled';
 
-CREATE INDEX IF NOT EXISTS idx_appt_patient     ON appointments (patient_id);
-CREATE INDEX IF NOT EXISTS idx_appt_doctor      ON appointments (doctor_id);
-CREATE INDEX IF NOT EXISTS idx_doctor_specialty ON doctors (specialty_id);
-CREATE INDEX IF NOT EXISTS idx_schedule_doctor  ON doctor_schedules (doctor_id, weekday);
+CREATE INDEX IF NOT EXISTS idx_appt_patient      ON appointments (patient_id);
+CREATE INDEX IF NOT EXISTS idx_appt_doctor       ON appointments (doctor_id);
+CREATE INDEX IF NOT EXISTS idx_appt_confirmation ON appointments (confirmation_status);
+CREATE INDEX IF NOT EXISTS idx_appt_date_status  ON appointments (appt_date, status);
+CREATE INDEX IF NOT EXISTS idx_doctor_specialty  ON doctors (specialty_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_doctor   ON doctor_schedules (doctor_id, weekday);

@@ -152,16 +152,26 @@ const ADMIN_APPT_SELECT = `
   JOIN users u    ON u.id = p.user_id
 `;
 
-/** GET /api/admin/appointments?status=&doctor_id=&date= */
+/**
+ * GET /api/admin/appointments?status=&confirmation=&doctor_id=&date=
+ *
+ * Ordered by soonest first: a scheduler works forwards through the day, so the
+ * next appointment belongs at the top. (This previously sorted newest-first,
+ * which put the furthest-future booking above today's.)
+ */
 router.get(
   '/appointments',
   wrap(async (req, res) => {
-    const { status, doctor_id, date } = req.query;
+    const { status, confirmation, doctor_id, date } = req.query;
     const clauses = [];
     const params = [];
     if (status) {
       params.push(status);
       clauses.push(`a.status = $${params.length}`);
+    }
+    if (confirmation) {
+      params.push(confirmation);
+      clauses.push(`a.confirmation_status = $${params.length}`);
     }
     if (doctor_id) {
       params.push(doctor_id);
@@ -173,7 +183,7 @@ router.get(
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = await db.query(
-      `${ADMIN_APPT_SELECT} ${where} ORDER BY a.appt_date DESC, a.appt_time DESC`,
+      `${ADMIN_APPT_SELECT} ${where} ORDER BY a.appt_date ASC, a.appt_time ASC`,
       params
     );
     res.json({ appointments: rows });
@@ -181,34 +191,68 @@ router.get(
 );
 
 /**
- * PATCH /api/admin/appointments/:id/status — approve/cancel/complete.
- * Body: { status: 'confirmed'|'cancelled'|'completed'|'pending', notes? }
+ * PATCH /api/admin/appointments/:id/status — record the visit's outcome.
+ * Body: { status: 'completed'|'cancelled'|'no_show', notes?, reason? }
+ *
+ * Deliberately cannot set 'booked' or touch confirmation_status:
+ *
+ *   * There is no approve step to perform. A booking is live the moment the
+ *     patient makes it, so staff have nothing to approve — the old
+ *     'pending' -> 'confirmed' click had no real-world counterpart.
+ *   * Confirmation belongs to the patient (see appointments.js), so staff must
+ *     not be able to forge it. Marking someone "confirmed" on their behalf is
+ *     precisely the bad data the confirmation axis exists to prevent.
+ *
+ * What staff legitimately record is how the visit ENDED.
  */
 router.patch(
   '/appointments/:id/status',
   wrap(async (req, res) => {
-    const valid = ['pending', 'confirmed', 'cancelled', 'completed'];
-    const { status, notes } = req.body || {};
+    const valid = ['completed', 'cancelled', 'no_show'];
+    const { status, notes, reason } = req.body || {};
     if (!valid.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status.' });
+      return res.status(400).json({
+        error: `Invalid status. Expected one of: ${valid.join(', ')}.`,
+      });
     }
-    const appt = await db.one('SELECT id FROM appointments WHERE id = $1', [req.params.id]);
-    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
 
-    try {
+    const appt = await db.one('SELECT * FROM appointments WHERE id = $1', [req.params.id]);
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+    if (appt.status !== 'booked') {
+      return res.status(409).json({
+        error: `This appointment is already ${appt.status.replace('_', '-')} and cannot be changed.`,
+      });
+    }
+    // A reason is mandatory for the two outcomes a practice reports on.
+    if ((status === 'cancelled' || status === 'no_show') && !String(reason || '').trim()) {
+      return res.status(400).json({ error: 'A reason is required to cancel or mark a no-show.' });
+    }
+
+    if (status === 'cancelled') {
       await db.query(
         `UPDATE appointments
-         SET status = $1, notes = COALESCE($2, notes), updated_at = now()
-         WHERE id = $3`,
-        [status, notes ?? null, req.params.id]
+         SET status = 'cancelled', cancelled_by = 'practice', cancel_reason = $2,
+             cancelled_at = now(), notes = COALESCE($3, notes), updated_at = now()
+         WHERE id = $1`,
+        [appt.id, String(reason).trim(), notes ?? null]
       );
-    } catch (err) {
-      // Reactivating a cancelled appointment could collide with the unique slot.
-      if (err.code === '23505') {
-        return res.status(409).json({ error: 'That doctor/time slot is already taken.' });
-      }
-      throw err;
+    } else if (status === 'no_show') {
+      await db.query(
+        `UPDATE appointments
+         SET status = 'no_show', cancel_reason = $2, notes = COALESCE($3, notes),
+             updated_at = now()
+         WHERE id = $1`,
+        [appt.id, String(reason).trim(), notes ?? null]
+      );
+    } else {
+      await db.query(
+        `UPDATE appointments
+         SET status = 'completed', notes = COALESCE($2, notes), updated_at = now()
+         WHERE id = $1`,
+        [appt.id, notes ?? null]
+      );
     }
+
     const updated = await db.one(`${ADMIN_APPT_SELECT} WHERE a.id = $1`, [req.params.id]);
     res.json({ appointment: updated });
   })
@@ -227,16 +271,27 @@ router.get(
     const totals = await db.one(
       `SELECT
          COUNT(*)                                     AS total,
-         COUNT(*) FILTER (WHERE status = 'pending')   AS pending,
-         COUNT(*) FILTER (WHERE status = 'confirmed') AS confirmed,
+         COUNT(*) FILTER (WHERE status = 'booked')    AS booked,
          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-         COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled
+         COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+         COUNT(*) FILTER (WHERE status = 'no_show')   AS no_show,
+         COUNT(*) FILTER (WHERE status = 'booked'
+                          AND confirmation_status = 'unconfirmed') AS unconfirmed
        FROM appointments`
     );
 
     const total = totals.total || 0;
     const cancelled = totals.cancelled || 0;
-    const cancellationRate = total ? Math.round((cancelled / total) * 1000) / 10 : 0;
+    const noShow = totals.no_show || 0;
+    const completed = totals.completed || 0;
+    const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : 0);
+
+    // No-show rate is measured against appointments that actually came due
+    // (kept + missed), not against every row ever created — future bookings
+    // haven't had the chance to be missed yet, and including them would dilute
+    // the rate toward zero. Cancellations are excluded: a slot given back with
+    // notice is a different failure from one silently burned.
+    const arrivedOrMissed = completed + noShow;
 
     const patients = (await db.one(`SELECT COUNT(*) AS n FROM users WHERE role = 'patient'`)).n;
     const activeDoctors = (
@@ -247,12 +302,14 @@ router.get(
       summary: {
         appointments: {
           total,
-          pending: totals.pending || 0,
-          confirmed: totals.confirmed || 0,
-          completed: totals.completed || 0,
+          booked: totals.booked || 0,
+          completed,
           cancelled,
+          no_show: noShow,
+          unconfirmed: totals.unconfirmed || 0,
         },
-        cancellation_rate: cancellationRate,
+        cancellation_rate: pct(cancelled, total),
+        no_show_rate: pct(noShow, arrivedOrMissed),
         total_patients: patients,
         active_doctors: activeDoctors,
       },
@@ -269,10 +326,11 @@ router.get(
   wrap(async (req, res) => {
     const rows = await db.query(
       `SELECT d.id, d.full_name, s.name AS specialty_name,
-              COUNT(a.id)                                                    AS total_appointments,
-              COUNT(a.id) FILTER (WHERE a.status = 'completed')              AS completed,
-              COUNT(a.id) FILTER (WHERE a.status = 'cancelled')              AS cancelled,
-              COUNT(a.id) FILTER (WHERE a.status IN ('pending','confirmed')) AS upcoming
+              COUNT(a.id)                                       AS total_appointments,
+              COUNT(a.id) FILTER (WHERE a.status = 'completed') AS completed,
+              COUNT(a.id) FILTER (WHERE a.status = 'cancelled') AS cancelled,
+              COUNT(a.id) FILTER (WHERE a.status = 'no_show')   AS no_show,
+              COUNT(a.id) FILTER (WHERE a.status = 'booked')    AS upcoming
        FROM doctors d
        LEFT JOIN specialties s ON s.id = d.specialty_id
        LEFT JOIN appointments a ON a.doctor_id = d.id

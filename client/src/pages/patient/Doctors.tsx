@@ -94,7 +94,7 @@ export default function Doctors() {
         },
       });
       setSelected(null);
-      toast('Appointment booked! Awaiting clinic confirmation.', 'success');
+      toast('Appointment booked — your slot is reserved.', 'success');
       setTimeout(() => navigate('/app/appointments'), 600);
     } catch (err) {
       setModalError((err as Error).message);
