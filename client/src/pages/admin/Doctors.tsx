@@ -257,7 +257,14 @@ export default function AdminDoctors() {
                 const clinics = sitesFor(d);
                 return (
                   <tr key={d.id}>
-                    <Td className="font-semibold text-slate-900">{d.full_name}</Td>
+                    <Td>
+                      <Link
+                        to={`/admin/physicians/${d.id}`}
+                        className="font-semibold text-accent-600 hover:underline"
+                      >
+                        {d.full_name}
+                      </Link>
+                    </Td>
                     <Td className="text-slate-500">{d.specialty_name || 'Unassigned'}</Td>
                     <Td>
                       {clinics.length > 0 ? (

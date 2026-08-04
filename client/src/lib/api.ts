@@ -437,6 +437,13 @@ export interface DoctorStats {
   patients: number;
   utilization_pct: number;
   booked_hours: number;
+  /**
+   * The window utilization was measured over. Sent so the figure can be
+   * labelled with its own date range: a bare percentage invites the reader to
+   * assume it covers all time, which it does not.
+   */
+  window_from?: string;
+  window_to?: string;
 }
 
 /**

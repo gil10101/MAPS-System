@@ -35,6 +35,7 @@ import DoctorReports from './pages/doctor/Reports';
 import Overview from './pages/admin/Overview';
 import AdminAppointments from './pages/admin/Appointments';
 import AdminDoctors from './pages/admin/Doctors';
+import PhysicianDetail from './pages/admin/PhysicianDetail';
 import AdminSchedules from './pages/admin/Schedules';
 import AdminLocations from './pages/admin/Locations';
 import AdminSpecialties from './pages/admin/Specialties';
@@ -90,6 +91,7 @@ export default function App() {
             <Route index element={<Overview />} />
             <Route path="appointments" element={<AdminAppointments />} />
             <Route path="doctors" element={<AdminDoctors />} />
+            <Route path="physicians/:id" element={<PhysicianDetail />} />
             <Route path="schedules" element={<AdminSchedules />} />
             <Route path="locations" element={<AdminLocations />} />
             <Route path="specialties" element={<AdminSpecialties />} />

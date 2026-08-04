@@ -274,7 +274,15 @@ router.delete(
 // ---------------------------------------------------------------------------
 
 /** How much history the profile's booked/utilization figures cover. */
-const STATS_WINDOW_DAYS = 30;
+/**
+ * How far back the utilization figure on a physician's profile looks.
+ *
+ * A rolling week rather than a month: utilization is read to decide who to move
+ * work to *now*, and a month-long average is slow to react to the fortnight a
+ * provider was on leave or covering a colleague. It also keeps this figure
+ * comparable with the Doctor Workload report, which practices run weekly.
+ */
+const STATS_WINDOW_DAYS = 7;
 
 /** Percentage to one decimal, divide-by-zero safe. Same math as the reports. */
 function pct(n, d) {

@@ -24,6 +24,7 @@ import {
 import {
   WEEKDAYS, adminCreateBlock, adminCreateSchedule, adminDeleteBlock,
   adminDeleteSchedule, adminListBlocks, adminListDoctors, adminListLocations,
+  adminScheduleImpact,
   adminListSchedules, formatDate, formatTime, todayStr,
   type Doctor, type Location, type Schedule, type ScheduleBlock, type Tone,
 } from '../../lib/api';
@@ -90,6 +91,9 @@ export default function AdminSchedules() {
   const [windowForm, setWindowForm] = useState(EMPTY_WINDOW);
   const [windowError, setWindowError] = useState('');
   const [windowBusy, setWindowBusy] = useState(false);
+  /** The window awaiting a delete confirmation, and what it would disturb. */
+  const [removeTarget, setRemoveTarget] = useState<Schedule | null>(null);
+  const [removeImpact, setRemoveImpact] = useState<number | null>(null);
 
   // Add-block modal
   const [blockOpen, setBlockOpen] = useState(false);
@@ -191,19 +195,44 @@ export default function AdminSchedules() {
     }
   }
 
-  async function removeWindow(s: Schedule) {
-    const ok = window.confirm(
-      `Remove ${WEEKDAYS[s.weekday]} ${formatTime(s.start_time)}–${formatTime(s.end_time)} ` +
-        `at ${s.location_name || 'this site'}? Appointments already booked in it keep their ` +
-        'time — use an availability block to clear a day that is already booked.'
-    );
-    if (!ok) return;
+  /**
+   * Ask the server what removing this window would disturb before offering to
+   * remove it. Deleting a window does not delete the visits inside it, so
+   * without this the administrator is told nothing about the appointments they
+   * are about to leave without a clinic session.
+   */
+  async function askRemoveWindow(s: Schedule) {
+    setRemoveTarget(s);
+    setRemoveImpact(null);
     try {
-      await adminDeleteSchedule(s.id);
-      toast('Clinic window removed.', 'success');
+      const { affected } = await adminScheduleImpact(s.id);
+      setRemoveImpact(affected);
+    } catch {
+      // Impact is advisory. If it cannot be fetched the confirmation still
+      // stands, it just cannot quote a number.
+      setRemoveImpact(-1);
+    }
+  }
+
+  async function confirmRemoveWindow() {
+    if (!removeTarget) return;
+    setWindowBusy(true);
+    try {
+      const { affected } = await adminDeleteSchedule(removeTarget.id);
+      toast(
+        affected > 0
+          ? `Clinic window removed — ${affected} ${
+              affected === 1 ? 'appointment needs' : 'appointments need'
+            } rescheduling.`
+          : 'Clinic window removed.',
+        'success'
+      );
+      setRemoveTarget(null);
       load();
     } catch (err) {
       toast((err as Error).message, 'error');
+    } finally {
+      setWindowBusy(false);
     }
   }
 
@@ -450,7 +479,7 @@ export default function AdminSchedules() {
                               label={`Remove ${label} ${w.start_time} window`}
                               variant="danger"
                               size="sm"
-                              onClick={() => removeWindow(w)}
+                              onClick={() => askRemoveWindow(w)}
                             />
                           </div>
                         ))
@@ -673,6 +702,59 @@ export default function AdminSchedules() {
             onChange={(e) => setBlockForm((f) => ({ ...f, reason: e.target.value }))}
           />
         </Field>
+      </Modal>
+
+      <Modal
+        open={!!removeTarget}
+        title="Remove clinic window"
+        onClose={() => setRemoveTarget(null)}
+        footer={
+          <>
+            <Button onClick={() => setRemoveTarget(null)}>Keep window</Button>
+            <Button
+              variant="danger"
+              loading={windowBusy}
+              disabled={removeImpact === null}
+              onClick={confirmRemoveWindow}
+            >
+              Remove window
+            </Button>
+          </>
+        }
+      >
+        {removeTarget && (
+          <>
+            <p className="mb-3 text-sm text-slate-700">
+              {WEEKDAYS[removeTarget.weekday]}{' '}
+              {formatTime(removeTarget.start_time)}–{formatTime(removeTarget.end_time)} at{' '}
+              {removeTarget.location_name || 'this site'} will stop generating slots.
+            </p>
+
+            {removeImpact === null && <Spinner label="Checking what this affects…" />}
+
+            {removeImpact !== null && removeImpact > 0 && (
+              <Alert tone="warning" icon={AlertTriangle}>
+                {plural(removeImpact, 'upcoming appointment')} already booked inside this
+                window {removeImpact === 1 ? 'is' : 'are'} kept, flagged as needing a new
+                time, and {removeImpact === 1 ? 'that patient is' : 'those patients are'}{' '}
+                notified. Nothing is deleted.
+              </Alert>
+            )}
+
+            {removeImpact === 0 && (
+              <Alert tone="success" icon={CheckCircle2}>
+                No upcoming appointments sit inside this window, so nobody is affected.
+              </Alert>
+            )}
+
+            {removeImpact === -1 && (
+              <Alert tone="warning" icon={AlertTriangle}>
+                Could not check what this affects. Any upcoming appointments inside the
+                window will still be kept and flagged for rescheduling.
+              </Alert>
+            )}
+          </>
+        )}
       </Modal>
     </div>
   );

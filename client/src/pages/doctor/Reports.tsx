@@ -20,20 +20,26 @@
  * with it.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertCircle, BarChart3, Download, Search } from 'lucide-react';
+import { AlertCircle, BarChart3, Download, Search, Users } from 'lucide-react';
 import {
-  STAFF_STATUS_LABEL, doctorDailyAppointmentsReport, doctorPatientVisitsReport,
-  doctorWorkloadReport, formatDate, formatTime, listDoctorPatients, monthRange, todayStr,
-  type ApptStatus, type CarePatient, type DailyAppointmentRow, type PatientVisitRow,
-  type Report, type ReportMeta, type WorkloadRow,
+  STAFF_STATUS_LABEL, STATUS_TONE, doctorDailyAppointmentsReport, doctorPatientVisitsReport,
+  doctorWorkloadReport, formatDate, formatTime, monthRange, searchDoctorPatients, todayStr,
+  type ApptStatus, type CarePatient, type DailyAppointmentRow, type PatientSearchResult,
+  type PatientVisitRow, type Report, type ReportMeta,
+  type WorkloadReport as WorkloadReportData, type WorkloadRow,
 } from '../../lib/api';
 import { exportCsv, reportFilename, type CsvColumn } from '../../lib/csv';
 import {
   Alert, Button, Card, EmptyState, Field, FilterBar, Input, PageHeader, Select, Spinner,
-  StatusBadge, Table, Tabs, Td, Th, type TabItem,
+  StatCard, StatusBadge, StatusBarChart, Table, Tabs, Td, Th, type TabItem,
 } from '../../components/ui';
 
 type ReportId = 'daily' | 'workload' | 'visits';
+
+/** Lifecycle order, so the chart reads the way an appointment travels. */
+const STATUS_ORDER: ApptStatus[] = [
+  'completed', 'confirmed', 'pending', 'cancelled', 'no_show',
+];
 
 const TABS: TabItem[] = [
   { id: 'daily', label: 'Daily Appointments' },
@@ -227,7 +233,7 @@ interface Range {
 }
 
 function WorkloadReport({ range, onRange }: { range: Range; onRange: (r: Range) => void }) {
-  const [data, setData] = useState<Report<WorkloadRow> | null>(null);
+  const [data, setData] = useState<WorkloadReportData | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
@@ -277,6 +283,44 @@ function WorkloadReport({ range, onRange }: { range: Range; onRange: (r: Range) 
         </>
       }
     >
+      {data?.totals && (
+        <div className="border-b border-slate-200 px-4 py-4 sm:px-6">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Patients seen" value={data.totals.patients} icon={Users} />
+            <StatCard
+              label="Appointments"
+              value={
+                data.totals.pending + data.totals.confirmed + data.totals.completed +
+                data.totals.cancelled + data.totals.no_show
+              }
+              icon={BarChart3}
+              accent
+            />
+            <StatCard label="Completed" value={data.totals.completed} icon={BarChart3} />
+            <StatCard
+              label="Missed or cancelled"
+              value={data.totals.no_show + data.totals.cancelled}
+              icon={BarChart3}
+              hint="Capacity that produced no visit"
+            />
+          </div>
+
+          {/* How the book actually resolved. The table above answers "how
+              much", this answers "how much of it counted". */}
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">
+            Appointments by status
+          </h3>
+          <StatusBarChart
+            data={STATUS_ORDER.map((s) => ({
+              label: STAFF_STATUS_LABEL[s],
+              value: data.totals[s] ?? 0,
+              tone: STATUS_TONE[s],
+            }))}
+            empty="Nothing on your book in this range."
+          />
+        </div>
+      )}
+
       <Table>
         <thead>
           <tr>
@@ -336,15 +380,22 @@ const VISIT_COLUMNS: CsvColumn<PatientVisitRow>[] = [
   { key: 'notes', label: 'Visit note' },
 ];
 
+/** Results per page in the patient search. */
+const PATIENT_PAGE = 10;
+
 /**
  * One patient's visits with this physician.
  *
- * The picker is a plain select over `GET /doctor/patients` rather than a
- * typeahead: that endpoint already returns exactly this doctor's own panel,
- * sorted by surname, so the list is bounded by how many people one physician
- * treats and there is nothing to search through. It also means the control
- * cannot express a patient the server would refuse — the 403 on the report
- * route is the real gate, but the UI should not offer the mistake.
+ * The patient is chosen by searching, not by scrolling a select. A dropdown
+ * holds every name at once, which is fine for a demo panel and impossible for a
+ * real one — a physician with a five-figure panel cannot find anybody in a list
+ * box. So the control asks the server for a page of matches at a time and never
+ * requests the whole table.
+ *
+ * Results render below the field rather than as an overlay: they carry a date
+ * of birth, a visit count and a last-visit date, which is what actually
+ * distinguishes two patients who share a name, and an overlay would cover the
+ * report while the physician is reading them.
  */
 function PatientVisitsReport({
   patientId, onPatient, range, onRange,
@@ -354,15 +405,42 @@ function PatientVisitsReport({
   range: Range;
   onRange: (r: Range) => void;
 }) {
-  const [patients, setPatients] = useState<CarePatient[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [results, setResults] = useState<PatientSearchResult | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState<CarePatient | null>(null);
   const [data, setData] = useState<Report<PatientVisitRow> | null>(null);
   const [error, setError] = useState('');
 
+  // Typing is a stream of keystrokes; the server should see the pauses.
   useEffect(() => {
-    listDoctorPatients()
-      .then(({ patients: rows }) => setPatients(rows))
-      .catch((err) => setError((err as Error).message));
-  }, []);
+    const t = window.setTimeout(() => {
+      setDebounced(query);
+      setOffset(0);
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    if (patientId) return; // A patient is chosen; the search is put away.
+    let live = true;
+    setSearching(true);
+    searchDoctorPatients({ q: debounced, limit: PATIENT_PAGE, offset })
+      .then((r) => {
+        if (live) setResults(r);
+      })
+      .catch((err) => {
+        if (live) setError((err as Error).message);
+      })
+      .finally(() => {
+        if (live) setSearching(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [debounced, offset, patientId]);
 
   const load = useCallback(() => {
     if (!patientId) {
@@ -378,10 +456,114 @@ function PatientVisitsReport({
 
   useEffect(load, [load]);
 
-  const selected = useMemo(
-    () => (patients ?? []).find((p) => String(p.patient_id) === patientId) ?? null,
-    [patients, patientId]
-  );
+  function choose(p: CarePatient) {
+    setSelected(p);
+    onPatient(String(p.patient_id));
+  }
+
+  function clearPatient() {
+    setSelected(null);
+    onPatient('');
+    setQuery('');
+    setOffset(0);
+  }
+
+  // The search panel replaces the report until somebody is chosen: running a
+  // per-patient report with no patient is not a state worth rendering.
+  if (!patientId) {
+    const rows = results?.patients ?? [];
+    const total = results?.total ?? 0;
+    const shown = offset + rows.length;
+
+    return (
+      <Card title="Patient Visit History">
+        <div className="p-4 pt-0">
+          <p className="mb-3 text-sm text-slate-600">
+            Search your own patients by name, then choose one to run their visit history.
+          </p>
+
+          {error && <Alert tone="error">{error}</Alert>}
+
+          <Field label="Search patients by name" htmlFor="patient-q">
+            <Input
+              id="patient-q"
+              value={query}
+              placeholder="e.g. Alvarez"
+              autoComplete="off"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </Field>
+
+          {searching && !results && <Spinner label="Searching…" />}
+
+          {results && rows.length === 0 && (
+            <p className="py-6 text-center text-sm text-slate-500">
+              {debounced
+                ? `No patients of yours match “${debounced}”.`
+                : 'You have no patients on your panel yet.'}
+            </p>
+          )}
+
+          {rows.length > 0 && (
+            <>
+              <ul className="divide-y divide-slate-200 border-y border-slate-200">
+                {rows.map((p) => (
+                  <li key={p.patient_id}>
+                    <button
+                      type="button"
+                      onClick={() => choose(p)}
+                      className="flex w-full items-center justify-between gap-4 px-1 py-3 text-left hover:bg-slate-50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block font-semibold text-slate-900">
+                          {p.full_name}
+                        </span>
+                        <span className="block text-xs text-slate-500">
+                          {p.date_of_birth ? `Born ${formatDate(p.date_of_birth)}` : 'DOB unknown'}
+                          {' · '}
+                          {p.visit_count} {p.visit_count === 1 ? 'visit' : 'visits'} with you
+                          {p.last_visit ? ` · last ${formatDate(p.last_visit)}` : ''}
+                        </span>
+                      </span>
+                      <span className="flex-none text-xs font-semibold text-accent-600">
+                        Run report
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              {/* Say what is not on screen. A silently truncated list reads as
+                  "these are all of them", which is how a physician concludes a
+                  patient is not theirs. */}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                <span>
+                  Showing {offset + 1}–{shown} of {total}
+                  {total > shown ? ' matching patients' : ''}
+                </span>
+                <span className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={offset === 0 || searching}
+                    onClick={() => setOffset(Math.max(0, offset - PATIENT_PAGE))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={shown >= total || searching}
+                    onClick={() => setOffset(offset + PATIENT_PAGE)}
+                  >
+                    Next
+                  </Button>
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <ReportShell
@@ -408,20 +590,15 @@ function PatientVisitsReport({
       }
       filters={
         <>
-          <Field label="Patient" htmlFor="visits-patient" className="mb-0">
-            <Select
-              id="visits-patient"
-              value={patientId}
-              disabled={!patients}
-              onChange={(e) => onPatient(e.target.value)}
-            >
-              <option value="">{patients ? 'Select a patient…' : 'Loading patients…'}</option>
-              {(patients ?? []).map((p) => (
-                <option key={p.patient_id} value={p.patient_id}>
-                  {p.full_name}
-                </option>
-              ))}
-            </Select>
+          <Field label="Patient" className="mb-0">
+            <div className="flex min-h-tap items-center gap-3">
+              <span className="font-semibold text-slate-900">
+                {selected?.full_name ?? `Patient #${patientId}`}
+              </span>
+              <Button size="sm" onClick={clearPatient}>
+                Change patient
+              </Button>
+            </div>
           </Field>
           <Field label="From" htmlFor="visits-from" className="mb-0">
             <Input

@@ -188,7 +188,14 @@ export default function Overview() {
             <tbody>
               {physicians.map((p) => (
                 <tr key={p.id}>
-                  <Td className="font-semibold text-slate-900">{p.full_name}</Td>
+                  <Td>
+                    <Link
+                      to={`/admin/physicians/${p.id}`}
+                      className="font-semibold text-accent-600 hover:underline"
+                    >
+                      {p.full_name}
+                    </Link>
+                  </Td>
                   <Td className="text-slate-500">{p.specialty_name || '—'}</Td>
                   <Td align="right" className="tabular-nums">{p.total_appointments}</Td>
                   <Td align="right" className="tabular-nums">{p.upcoming}</Td>
