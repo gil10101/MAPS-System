@@ -324,6 +324,34 @@ export interface WorkloadRow {
   utilization_pct: number;
 }
 
+/**
+ * Outcome counts for a whole workload range, and the same counts broken down
+ * by day. The per-row figures answer "who was busy"; these answer "how did the
+ * period actually go", which is the question a physician opens the report for.
+ */
+export interface WorkloadTotals {
+  patients: number;
+  pending: number;
+  confirmed: number;
+  completed: number;
+  cancelled: number;
+  no_show: number;
+}
+
+export interface WorkloadDay {
+  date: string; // 'YYYY-MM-DD'
+  completed: number;
+  confirmed: number;
+  cancelled: number;
+  no_show: number;
+}
+
+/** The physician's own workload report: the shared envelope plus the rollups. */
+export interface WorkloadReport extends Report<WorkloadRow> {
+  totals: WorkloadTotals;
+  by_day: WorkloadDay[];
+}
+
 export interface PatientVisitRow {
   appt_date: string;
   appt_time: string;
@@ -389,6 +417,47 @@ export interface SpecialtyVolume {
   total_appointments: number;
 }
 
+/**
+ * Everything the admin physician detail screen shows about one doctor.
+ *
+ * `utilization_pct` and `booked_hours` are the same measures the utilization
+ * report uses, computed against this physician's own schedule — a doctor who
+ * holds one clinic a week and fills it is at 100%, not "quiet".
+ */
+export interface DoctorStats {
+  total: number;
+  pending: number;
+  confirmed: number;
+  completed: number;
+  cancelled: number;
+  no_show: number;
+  /** Live bookings still in the future — the ones cancelling them would hit. */
+  upcoming: number;
+  /** Distinct patients seen, not appointment count. */
+  patients: number;
+  utilization_pct: number;
+  booked_hours: number;
+}
+
+/**
+ * One line of the physician's audit trail. `kind` is deliberately a bare
+ * string: the server owns that vocabulary and grows it (a new schedule event,
+ * a new decision type), and a closed union here would turn every addition into
+ * a client build failure for data the page only ever prints.
+ */
+export interface DoctorActivity {
+  at: string; // ISO timestamp
+  kind: string;
+  summary: string;
+}
+
+export interface DoctorDetail {
+  doctor: Doctor;
+  stats: DoctorStats;
+  recent_appointments: Appointment[];
+  recent_activity: DoctorActivity[];
+}
+
 // ===========================================================================
 // Display vocabulary
 // ===========================================================================
@@ -428,6 +497,35 @@ export const OPEN_STATUSES: ApptStatus[] = ['pending', 'confirmed'];
 
 export function isOpen(status: ApptStatus): boolean {
   return OPEN_STATUSES.includes(status);
+}
+
+/**
+ * The moment a slot begins, in the reader's own timezone.
+ *
+ * Built from the parts rather than parsed as one string: `new Date('2026-07-20')`
+ * is UTC midnight, which is the previous evening for anyone west of Greenwich,
+ * and a gate that is a day out is worse than no gate.
+ */
+export function apptStart(appt_date: string, appt_time: string): Date {
+  const [y, m, d] = appt_date.slice(0, 10).split('-').map(Number);
+  const [hh, mm] = appt_time.split(':').map(Number);
+  return new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0);
+}
+
+/**
+ * Has the appointment come due?
+ *
+ * The server is the authority here — it refuses a completion or a no-show on a
+ * slot that has not started yet, whatever the client believes the time is. This
+ * exists so the UI can *say so first*: an action that will be rejected should
+ * be visibly disabled with the reason, not offered and then refused. Hiding it
+ * instead would leave the physician looking for a button that is not there.
+ */
+export function apptHasStarted(
+  appt: { appt_date: string; appt_time: string },
+  now: Date = new Date()
+): boolean {
+  return apptStart(appt.appt_date, appt.appt_time).getTime() <= now.getTime();
 }
 
 /**
@@ -806,6 +904,23 @@ export function completeAppointment(
   });
 }
 
+/**
+ * Record that the patient never arrived. The physician's half of the pair with
+ * completeAppointment, and gated the same way: the server refuses both until
+ * the slot's start time has passed, because a visit cannot have been missed
+ * before it was due. `reason` is required — "didn't attend" with no account of
+ * it is the row a practice can do nothing with.
+ */
+export function markAppointmentNoShow(
+  id: number | string,
+  reason: string
+): Promise<{ appointment: Appointment }> {
+  return api<{ appointment: Appointment }>(`/doctor/appointments/${id}/no-show`, {
+    method: 'PATCH',
+    body: { reason },
+  });
+}
+
 export function saveVisitNote(
   id: number | string,
   notes: string
@@ -818,6 +933,32 @@ export function saveVisitNote(
 
 export function listDoctorPatients(): Promise<{ patients: CarePatient[] }> {
   return api<{ patients: CarePatient[] }>('/doctor/patients');
+}
+
+export interface PatientSearchFilters {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Paged search across the physician's own patient list.
+ *
+ * `total` is the size of the whole match, not of this page: a pager cannot say
+ * "31–40 of 214" from the rows it was handed, and a list that only knows
+ * whether another page exists can never show a reader where they are.
+ */
+export interface PatientSearchResult {
+  patients: CarePatient[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export function searchDoctorPatients(
+  filters: PatientSearchFilters = {}
+): Promise<PatientSearchResult> {
+  return api<PatientSearchResult>(`/doctor/patients/search${qs(filters)}`);
 }
 
 export function fetchPatientChart(patientId: number | string): Promise<Chart> {
@@ -877,8 +1018,9 @@ export function doctorDailyAppointmentsReport(date: string): Promise<Report<Dail
   return api<Report<DailyAppointmentRow>>(`/doctor/reports/daily-appointments${qs({ date })}`);
 }
 
-export function doctorWorkloadReport(from: string, to: string): Promise<Report<WorkloadRow>> {
-  return api<Report<WorkloadRow>>(`/doctor/reports/workload${qs({ from, to })}`);
+/** Same `{ rows, meta }` envelope as every other report, plus §4 rollups. */
+export function doctorWorkloadReport(from: string, to: string): Promise<WorkloadReport> {
+  return api<WorkloadReport>(`/doctor/reports/workload${qs({ from, to })}`);
 }
 
 /** Patient visit history is exposed in the doctor portal only, own patients only. */
@@ -898,6 +1040,16 @@ export function doctorPatientVisitsReport(
 
 export function adminListDoctors(): Promise<{ doctors: Doctor[] }> {
   return api<{ doctors: Doctor[] }>('/admin/doctors');
+}
+
+/**
+ * One physician, assembled: the directory entry, their figures, the last of
+ * their book, and their audit trail. A single call rather than four because
+ * the screen is useless until all of it has arrived, and four requests would
+ * only give the reader four chances to see a half-drawn page.
+ */
+export function adminDoctorDetail(id: number | string): Promise<DoctorDetail> {
+  return api<DoctorDetail>(`/admin/doctors/${id}/detail`);
 }
 
 export interface DoctorBody {
@@ -1024,8 +1176,25 @@ export function adminCreateSchedule(
   });
 }
 
-export function adminDeleteSchedule(scheduleId: number | string): Promise<OkResponse> {
-  return api<OkResponse>(`/admin/schedules/${scheduleId}`, { method: 'DELETE' });
+/**
+ * How many live appointments sit inside a recurring window, asked before it is
+ * deleted. Removing a Thursday clinic is not an edit to a row, it is a decision
+ * about the people already booked into it — so the count is available to put in
+ * front of the admin while the choice is still theirs to make.
+ */
+export function adminScheduleImpact(
+  scheduleId: number | string
+): Promise<{ affected: number }> {
+  return api<{ affected: number }>(`/admin/schedules/${scheduleId}/impact`);
+}
+
+/** Answers with the same `affected` count, now as a record of what it did. */
+export function adminDeleteSchedule(
+  scheduleId: number | string
+): Promise<OkResponse & { affected: number }> {
+  return api<OkResponse & { affected: number }>(`/admin/schedules/${scheduleId}`, {
+    method: 'DELETE',
+  });
 }
 
 export function adminListBlocks(doctorId: number | string): Promise<{ blocks: ScheduleBlock[] }> {

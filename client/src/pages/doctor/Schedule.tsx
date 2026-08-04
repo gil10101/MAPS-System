@@ -17,14 +17,31 @@ import {
   AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Clock,
 } from 'lucide-react';
 import {
-  addDays, completeAppointment, formatDate, formatTime, listDoctorAppointments, todayStr,
+  addDays, completeAppointment, formatDate, formatTime, markAppointmentNoShow,
+  listDoctorAppointments, NO_SHOW_REASONS, todayStr,
   type Appointment,
 } from '../../lib/api';
 import {
   Alert, Button, Card, EmptyState, Field, IconButton, Input, Modal, PageHeader,
-  RescheduleBadge, Spinner, StatusBadge, Table, Td, Textarea, Th,
+  ReasonModal, RescheduleBadge, RowMenu, MenuItem, Spinner, StatusBadge, Table,
+  Td, Textarea, Th,
 } from '../../components/ui';
 import { useToast } from '../../components/Toast';
+
+/**
+ * Has this appointment's start time passed?
+ *
+ * A physician records what happened at a visit, so neither outcome is available
+ * before the visit begins — there is nothing yet to report. The server enforces
+ * this too; this is the same rule stated in the interface so the action can be
+ * shown as not-yet-available rather than silently missing.
+ *
+ * Compared against the appointment's own date and time rather than the page's
+ * selected date, because the schedule pages freely to any day.
+ */
+function hasStarted(a: Appointment): boolean {
+  return new Date(`${a.appt_date}T${a.appt_time}`).getTime() <= Date.now();
+}
 
 export default function DoctorSchedule() {
   const toast = useToast();
@@ -37,6 +54,9 @@ export default function DoctorSchedule() {
   const [completing, setCompleting] = useState<Appointment | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /** Non-attendance needs a reason, so it collects one the same way. */
+  const [noShowTarget, setNoShowTarget] = useState<Appointment | null>(null);
 
   const load = useCallback(() => {
     setAppointments(null);
@@ -59,6 +79,21 @@ export default function DoctorSchedule() {
       toast(`Visit with ${completing.patient_name} completed.`, 'success');
       setCompleting(null);
       setNote('');
+      load();
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markNoShow(reason: string) {
+    if (!noShowTarget) return;
+    setBusy(true);
+    try {
+      await markAppointmentNoShow(noShowTarget.id, reason);
+      toast(`${noShowTarget.patient_name} recorded as not attending.`, 'success');
+      setNoShowTarget(null);
       load();
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -165,22 +200,43 @@ export default function DoctorSchedule() {
                   </Td>
                   <Td align="right">
                     {a.status === 'confirmed' ? (
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        onClick={() => {
-                          setCompleting(a);
-                          setNote('');
-                        }}
-                      >
-                        Complete visit
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          disabled={!hasStarted(a)}
+                          title={
+                            hasStarted(a)
+                              ? undefined
+                              : `Available from ${formatTime(a.appt_time)}`
+                          }
+                          onClick={() => {
+                            setCompleting(a);
+                            setNote('');
+                          }}
+                        >
+                          Complete visit
+                        </Button>
+                        <RowMenu label={`Actions for ${a.patient_name}`}>
+                          <MenuItem
+                            disabled={!hasStarted(a)}
+                            onClick={() => setNoShowTarget(a)}
+                          >
+                            Didn't attend
+                          </MenuItem>
+                        </RowMenu>
+                      </div>
                     ) : a.status === 'pending' ? (
                       <span className="text-xs text-slate-500">Awaiting clinic approval</span>
                     ) : a.status === 'completed' && a.notes ? (
                       <span className="text-xs text-slate-500">Note on file</span>
                     ) : (
                       <span className="text-xs text-slate-400">—</span>
+                    )}
+                    {a.status === 'confirmed' && !hasStarted(a) && (
+                      <div className="mt-1 text-xs text-slate-400">
+                        Available from {formatTime(a.appt_time)}
+                      </div>
                     )}
                   </Td>
                 </tr>
@@ -234,6 +290,24 @@ export default function DoctorSchedule() {
           </>
         )}
       </Modal>
+
+      <ReasonModal
+        open={!!noShowTarget}
+        busy={busy}
+        title="Record a missed appointment"
+        presets={NO_SHOW_REASONS}
+        confirmLabel="Record as missed"
+        dismissLabel="Go back"
+        onConfirm={markNoShow}
+        onCancel={() => setNoShowTarget(null)}
+        intro={
+          noShowTarget
+            ? `${noShowTarget.patient_name} did not attend their ${formatTime(
+                noShowTarget.appt_time
+              )} appointment. The slot stays consumed — a missed visit is not returned to the pool.`
+            : undefined
+        }
+      />
     </>
   );
 }

@@ -14,7 +14,11 @@ const db = require('../db/database');
 const wrap = require('../utils/wrap');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { notify } = require('../services/notify');
-const { toMinutes } = require('../utils/slots');
+const { toMinutes, countSlotsInRange } = require('../utils/slots');
+// "Booked" has one definition in this system and it lives with the reports.
+// Re-declaring it here is how a profile page and the Provider Utilization
+// report end up quoting different numbers for the same physician.
+const { BOOKED_STATUSES } = require('./admin-reports');
 
 const router = express.Router();
 
@@ -266,6 +270,280 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------------
+// Physician detail — the whole profile page in one round trip
+// ---------------------------------------------------------------------------
+
+/** How much history the profile's booked/utilization figures cover. */
+const STATS_WINDOW_DAYS = 30;
+
+/** Percentage to one decimal, divide-by-zero safe. Same math as the reports. */
+function pct(n, d) {
+  return d ? Math.round((n / d) * 1000) / 10 : 0;
+}
+
+/** One decimal — used for hours. */
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
+/**
+ * Date -> 'YYYY-MM-DD' from local parts. toISOString() would be UTC and can
+ * land on the wrong calendar day for anyone west of Greenwich, which would
+ * shift the whole reporting window by a day.
+ */
+function statsDateStr(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * 'Aug 12, 2026 at 9:30 AM' — the visit a feed line is about.
+ *
+ * Formatted server-side because the activity summary is a finished sentence,
+ * not fields the client lays out. Parsed at noon for the same reason slots.js
+ * does it: midnight lets a negative UTC offset roll the date back a day.
+ */
+function whenPhrase(dateStr, timeStr) {
+  const day = new Date(`${dateStr}T12:00:00`);
+  const date = Number.isNaN(day.getTime())
+    ? String(dateStr)
+    : day.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const [h, m] = String(timeStr || '')
+    .split(':')
+    .map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return date;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${date} at ${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * One activity line as prose.
+ *
+ * Built in JS rather than in the union's SQL: the cancellation wording branches
+ * on who cancelled and on whether a reason was recorded, and the CASE
+ * expression that spells that out is unreadable next to the copy it produces.
+ * The patient is the subject of every line so the feed says who each event
+ * happened to, not just that something happened.
+ */
+function activitySummary(row) {
+  const when = whenPhrase(row.appt_date, row.appt_time);
+  const patient = row.patient_name;
+
+  switch (row.kind) {
+    case 'approved':
+      return `${patient}'s appointment on ${when} was approved`;
+    case 'completed':
+      return `${patient}'s visit on ${when} was completed`;
+    case 'cancelled': {
+      // 'unknown' contributes nothing: naming a canceller the record does not
+      // actually identify would be an invention.
+      const by =
+        row.cancelled_by === 'patient'
+          ? ' by the patient'
+          : row.cancelled_by === 'practice'
+            ? ' by the practice'
+            : '';
+      const why = row.cancel_reason ? ` — ${row.cancel_reason}` : '';
+      return `${patient}'s appointment on ${when} was cancelled${by}${why}`;
+    }
+    default:
+      return `${patient} did not attend on ${when}`;
+  }
+}
+
+/**
+ * The physician's activity feed, newest first.
+ *
+ * A union over the timestamp columns the appointment itself carries — there is
+ * no events table and inventing one would mean a second source of truth for
+ * things the appointment already records.
+ *
+ * Completions and non-attendance fall back to updated_at because the schema has
+ * no completed_at: those outcomes are a status flip, and the row's last write
+ * is the closest honest answer. A note amended afterwards moves that timestamp,
+ * which is the known cost of not having a per-event log; it is recorded here
+ * rather than papered over with a guess.
+ *
+ * The outcome branches key on `status`, not on which timestamp happens to be
+ * filled in. A no-show is expected to leave cancelled_at null, but rows exist
+ * where it is set, and reading cancelled_at as "this was cancelled" would list
+ * one visit twice under two contradicting outcomes. Status is what the visit
+ * *is*; the timestamps only say when.
+ *
+ * The union carries ids only and the details are joined on once outside it,
+ * instead of repeating the patient join in all four branches.
+ */
+const ACTIVITY_FEED = `
+  WITH events AS (
+    SELECT id, approved_at AS at, 'approved'::text AS kind
+    FROM appointments WHERE doctor_id = $1 AND approved_at IS NOT NULL
+    UNION ALL
+    SELECT id, updated_at, 'completed'
+    FROM appointments WHERE doctor_id = $1 AND status = 'completed'
+    UNION ALL
+    SELECT id, cancelled_at, 'cancelled'
+    FROM appointments
+    WHERE doctor_id = $1 AND status = 'cancelled' AND cancelled_at IS NOT NULL
+    UNION ALL
+    SELECT id, updated_at, 'no_show'
+    FROM appointments WHERE doctor_id = $1 AND status = 'no_show'
+  )
+  SELECT e.at, e.kind,
+         a.appt_date, a.appt_time, a.cancel_reason, a.cancelled_by,
+         u.full_name AS patient_name
+  FROM events e
+  JOIN appointments a ON a.id = e.id
+  JOIN patients p     ON p.id = a.patient_id
+  JOIN users u        ON u.id = p.user_id
+  ORDER BY e.at DESC
+  LIMIT 15
+`;
+
+/**
+ * GET /api/admin/doctors/:id/detail — everything the physician profile shows.
+ * Returns { doctor, stats, recent_appointments, recent_activity }.
+ *
+ * One endpoint rather than four: the page has no use for a third of itself, and
+ * four calls are four chances to render half-loaded.
+ *
+ * utilization_pct is built on countSlotsInRange — the same denominator the
+ * Provider Utilization report and patient-facing availability use. Counting
+ * capacity here with its own SQL is exactly how this page and that report would
+ * come to disagree about the same fortnight with no way to tell which is right.
+ */
+router.get(
+  '/doctors/:id/detail',
+  wrap(async (req, res) => {
+    // Inactive sites are kept in `locations`, unlike the patient-facing
+    // directory: an admin needs to see a window still pointing at a building
+    // the practice has closed, because that is the thing to go and fix.
+    const doctor = await db.one(
+      `SELECT d.*, s.name AS specialty_name, u.email AS login_email,
+              COALESCE((
+                SELECT jsonb_agg(
+                         jsonb_build_object('id', site.id, 'name', site.name, 'city', site.city)
+                         ORDER BY site.name)
+                FROM (
+                  SELECT DISTINCT l.id, l.name, l.city
+                  FROM doctor_schedules ds
+                  JOIN locations l ON l.id = ds.location_id
+                  WHERE ds.doctor_id = d.id
+                ) site
+              ), '[]'::jsonb) AS locations
+       FROM doctors d
+       LEFT JOIN specialties s ON s.id = d.specialty_id
+       LEFT JOIN users u ON u.id = d.user_id
+       WHERE d.id = $1`,
+      [req.params.id]
+    );
+    if (!doctor) return res.status(404).json({ error: 'Physician not found.' });
+
+    // Inclusive window ending today, so "30 days" is 30 dates and not 31.
+    const windowStart = new Date();
+    windowStart.setDate(windowStart.getDate() - (STATS_WINDOW_DAYS - 1));
+    const from = statsDateStr(windowStart);
+    const to = statsDateStr(new Date());
+
+    const [counts, booked, capacity, recentAppointments, activity] = await Promise.all([
+      // Lifetime status counts — the same reading as the Overview's
+      // physician-utilization panel. `patients` counts completed visits only:
+      // a booking that never happened did not make someone a patient seen.
+      db.one(
+        `SELECT COUNT(*)                                     AS total,
+                COUNT(*) FILTER (WHERE status = 'pending')   AS pending,
+                COUNT(*) FILTER (WHERE status = 'confirmed') AS confirmed,
+                COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+                COUNT(*) FILTER (WHERE status = 'no_show')   AS no_show,
+                COUNT(*) FILTER (WHERE status = 'confirmed'
+                                   AND appt_date >= CURRENT_DATE) AS upcoming,
+                COUNT(DISTINCT patient_id) FILTER (WHERE status = 'completed') AS patients
+         FROM appointments
+         WHERE doctor_id = $1`,
+        [doctor.id]
+      ),
+      // Booked hours cannot be derived from a count: a 15-minute follow-up and
+      // a 45-minute new-patient visit are one appointment each. Each row is
+      // joined back to the window covering its weekday and start time to
+      // recover the slot length it was booked at, exactly as the Doctor
+      // Workload report does. The join is LEFT and falls back to 30 minutes
+      // because the schedule may have been narrowed or deleted since — a past
+      // visit must still contribute hours rather than drop out of the sum.
+      db.one(
+        `SELECT COUNT(a.id) AS appointments,
+                COALESCE(SUM(COALESCE(w.slot_minutes, 30)), 0) AS booked_minutes
+         FROM appointments a
+         LEFT JOIN LATERAL (
+           SELECT ds.slot_minutes
+           FROM doctor_schedules ds
+           WHERE ds.doctor_id = a.doctor_id
+             AND ds.weekday   = EXTRACT(DOW FROM a.appt_date)::int
+             AND a.appt_time >= ds.start_time
+             AND a.appt_time <  ds.end_time
+           ORDER BY ds.start_time
+           LIMIT 1
+         ) w ON true
+         WHERE a.doctor_id = $1
+           AND a.appt_date BETWEEN $2::date AND $3::date
+           AND a.status = ANY($4::text[])`,
+        [doctor.id, from, to, BOOKED_STATUSES]
+      ),
+      countSlotsInRange(doctor.id, from, to),
+      // Newest first by the visit's own date and time, so the top of the list
+      // is where this physician's book currently is — anything still ahead of
+      // them included.
+      db.query(
+        `SELECT a.id, a.appt_date, a.appt_time, a.status,
+                u.full_name AS patient_name,
+                l.name      AS location_name
+         FROM appointments a
+         JOIN patients p ON p.id = a.patient_id
+         JOIN users u    ON u.id = p.user_id
+         LEFT JOIN locations l ON l.id = a.location_id
+         WHERE a.doctor_id = $1
+         ORDER BY a.appt_date DESC, a.appt_time DESC, a.id DESC
+         LIMIT 10`,
+        [doctor.id]
+      ),
+      db.query(ACTIVITY_FEED, [doctor.id]),
+    ]);
+
+    res.json({
+      doctor,
+      stats: {
+        total: counts.total,
+        pending: counts.pending,
+        confirmed: counts.confirmed,
+        completed: counts.completed,
+        cancelled: counts.cancelled,
+        no_show: counts.no_show,
+        upcoming: counts.upcoming,
+        patients: counts.patients,
+        booked_hours: round1(booked.booked_minutes / 60),
+        // Left uncapped above 100%, as in the utilization report: it means
+        // visits exist outside the schedule this doctor currently publishes,
+        // and clamping it would erase the discrepancy worth looking at.
+        utilization_pct: pct(booked.appointments, capacity),
+        // The window is reported with the figures it produced — a "last 30
+        // days" number with no dates on it is uncitable a week later.
+        window_from: from,
+        window_to: to,
+      },
+      recent_appointments: recentAppointments,
+      recent_activity: activity.map((row) => ({
+        at: row.at,
+        kind: row.kind,
+        summary: activitySummary(row),
+      })),
+    });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // Specialties
 // ---------------------------------------------------------------------------
 
@@ -398,10 +676,6 @@ const TRANSITIONS = {
     from: ['pending'],
     rule: 'Only a pending request can be approved.',
   },
-  completed: {
-    from: ['confirmed'],
-    rule: 'Only a confirmed appointment can be completed.',
-  },
   cancelled: {
     from: ['pending', 'confirmed'],
     rule: 'Only a pending or confirmed appointment can be cancelled.',
@@ -410,6 +684,20 @@ const TRANSITIONS = {
     from: ['confirmed'],
     rule: 'Only a confirmed appointment can be marked as a no-show.',
   },
+};
+
+/**
+ * Transitions that are real, but are not an administrator's to make — and who
+ * owns them.
+ *
+ * Kept apart from TRANSITIONS so the refusal can name the role that may do it.
+ * Folding `completed` in with genuinely unknown statuses would answer 400
+ * "invalid status", which reads as a client bug rather than as the rule it is,
+ * and would leave an admin retrying a request that can never succeed.
+ */
+const NOT_ADMINS_TO_MAKE = {
+  completed:
+    'Only the treating physician can complete a visit. Completion is the doctor recording that they saw the patient, which the practice office has no way to know — ask them to close it out from their portal.',
 };
 
 /**
@@ -502,20 +790,35 @@ router.get(
 
 /**
  * PATCH /api/admin/appointments/:id/status — move a booking along its lifecycle.
- * Body: { status: 'confirmed'|'completed'|'cancelled'|'no_show', reason? }
+ * Body: { status: 'confirmed'|'cancelled'|'no_show', reason? }
  *
  * `confirmed` is the approval step (A1): a booking arrives as a *request* and
  * only becomes a real appointment when clinic staff accept it, which is why the
  * approving admin and the moment are stamped onto the row.
  *
- * Transitions are enforced rather than assumed. A completed visit that can be
- * re-cancelled, or a no-show recorded against a slot nobody ever confirmed, is
- * exactly the data that makes the cancellation and utilization reports lie.
+ * `completed` is deliberately not here. Marking a visit complete is a clinical
+ * assertion — the physician stating they saw the patient — and it is the row
+ * every utilization and workload figure is built on. An administrator can see
+ * that a slot came and went, not that a consultation happened, so the
+ * transition belongs to the doctor's portal and is refused here with a 403
+ * naming them.
+ *
+ * The remaining transitions are enforced rather than assumed. A cancelled visit
+ * that can be re-cancelled, or a no-show recorded against a slot nobody ever
+ * confirmed, is exactly the data that makes the cancellation and utilization
+ * reports lie.
  */
 router.patch(
   '/appointments/:id/status',
   wrap(async (req, res) => {
     const { status, reason } = req.body || {};
+
+    // Checked ahead of the transition table: this is a permission answer, not a
+    // validation one, and the caller needs to be told who to go to instead.
+    if (NOT_ADMINS_TO_MAKE[status]) {
+      return res.status(403).json({ error: NOT_ADMINS_TO_MAKE[status] });
+    }
+
     const transition = TRANSITIONS[status];
     if (!transition) {
       return res.status(400).json({
@@ -556,20 +859,15 @@ router.patch(
          WHERE id = $1`,
         [appt.id, why]
       );
-    } else if (status === 'no_show') {
-      // The reason lands in cancel_reason on purpose: the Cancellation report
-      // covers cancellations and no-shows together and reads one column for
-      // both. cancelled_by/cancelled_at stay null — nobody cancelled this.
+    } else {
+      // no_show. The reason lands in cancel_reason on purpose: the Cancellation
+      // report covers cancellations and no-shows together and reads one column
+      // for both. cancelled_by/cancelled_at stay null — nobody cancelled this.
       await db.query(
         `UPDATE appointments
          SET status = 'no_show', cancel_reason = $2, updated_at = now()
          WHERE id = $1`,
         [appt.id, why]
-      );
-    } else {
-      await db.query(
-        `UPDATE appointments SET status = 'completed', updated_at = now() WHERE id = $1`,
-        [appt.id]
       );
     }
 
@@ -723,20 +1021,134 @@ router.post(
 );
 
 /**
+ * An appointment "falls inside" a weekly window when it is still live, its date
+ * is today or later, its weekday matches, and its start time sits in the
+ * window. Expects $1 = doctor id, $2 = weekday, $3 = start_time, $4 = end_time,
+ * with the row aliased `a`.
+ *
+ * Half-open on end_time to match slot generation (slots.js expandWindow stops
+ * at start + slot <= end), so a visit starting exactly at end_time was never a
+ * slot this window produced and is not this window's to disturb.
+ *
+ * Past dates are excluded deliberately: a visit that already happened is
+ * history, and flagging it would ask a patient to move an appointment they
+ * have already attended. One predicate serves both the impact count and the
+ * delete so the warning can never describe a different set from the one the
+ * delete actually touches.
+ */
+const IN_WINDOW = `
+  a.status IN ('pending', 'confirmed')
+  AND a.appt_date >= CURRENT_DATE
+  AND EXTRACT(DOW FROM a.appt_date)::int = $2::int
+  AND a.appt_time >= $3::varchar
+  AND a.appt_time <  $4::varchar
+`;
+
+/**
+ * GET /api/admin/schedules/:id/impact — how many live appointments sit inside
+ * this window. The UI calls it before deleting so the admin is warned with a
+ * number rather than finding out afterwards.
+ */
+router.get(
+  '/schedules/:id/impact',
+  wrap(async (req, res) => {
+    const clinicWindow = await db.one(
+      'SELECT doctor_id, weekday, start_time, end_time FROM doctor_schedules WHERE id = $1',
+      [req.params.id]
+    );
+    if (!clinicWindow) return res.status(404).json({ error: 'Schedule window not found.' });
+
+    const { affected } = await db.one(
+      `SELECT COUNT(*)::int AS affected
+       FROM appointments a
+       WHERE a.doctor_id = $1 AND ${IN_WINDOW}`,
+      [
+        clinicWindow.doctor_id,
+        clinicWindow.weekday,
+        clinicWindow.start_time,
+        clinicWindow.end_time,
+      ]
+    );
+    res.json({ affected });
+  })
+);
+
+/**
  * DELETE /api/admin/schedules/:id — drop a clinic window.
- * Appointments already booked inside it survive: they carry their own date,
- * time, and site, so removing the pattern stops future bookings without
- * rewriting visits that are on the books. Use an availability block to clear
- * a day that is already booked.
+ *
+ * Appointments already booked inside it are not deleted — no foreign key ties
+ * them to the window, and a visit on the books is not the practice's to erase.
+ * They are flagged instead. Left alone they would be orphaned: the visit still
+ * exists and still shows on the physician's day, at a time they no longer hold
+ * clinic, with nothing anywhere surfacing the contradiction. A silent
+ * inconsistency is worse than a visible failure, so this behaves like the
+ * availability-block endpoint — the patient keeps their place and is asked to
+ * move it.
+ *
+ * The delete and the flagging share one transaction: a window that vanished
+ * without flagging its bookings would leave patients turning up to an empty
+ * clinic. The notifications are sent after the commit, not inside it — a
+ * message telling someone to reschedule is unretractable, and a rolled-back
+ * transaction would make it a lie (see the header of services/notify.js).
  */
 router.delete(
   '/schedules/:id',
   wrap(async (req, res) => {
-    const deleted = await db.one('DELETE FROM doctor_schedules WHERE id = $1 RETURNING id', [
-      req.params.id,
-    ]);
-    if (!deleted) return res.status(404).json({ error: 'Schedule window not found.' });
-    res.json({ ok: true, message: 'Schedule window removed.' });
+    const affected = await db.tx(async (c) => {
+      // Deleting first and reading the window's shape out of RETURNING means
+      // the flagging is driven by captured values, so it cannot depend on the
+      // row it just removed still being visible.
+      const removed = await c.query(
+        `DELETE FROM doctor_schedules WHERE id = $1
+         RETURNING doctor_id, weekday, start_time, end_time`,
+        [req.params.id]
+      );
+      const clinicWindow = removed.rows[0];
+      if (!clinicWindow) return null;
+
+      // The join pulls the recipient and the wording context out of the same
+      // statement that does the flagging.
+      const flagged = await c.query(
+        `UPDATE appointments a
+         SET reschedule_required = true, updated_at = now()
+         FROM patients p, doctors d
+         WHERE p.id = a.patient_id AND d.id = a.doctor_id
+           AND a.doctor_id = $1 AND ${IN_WINDOW}
+         RETURNING a.id, a.appt_date, a.appt_time,
+                   p.user_id AS patient_user_id, d.full_name AS doctor_name`,
+        [
+          clinicWindow.doctor_id,
+          clinicWindow.weekday,
+          clinicWindow.start_time,
+          clinicWindow.end_time,
+        ]
+      );
+      return flagged.rows;
+    });
+
+    if (!affected) return res.status(404).json({ error: 'Schedule window not found.' });
+
+    await Promise.all(
+      affected.map((appt) =>
+        notify({
+          userId: appt.patient_user_id,
+          appointmentId: appt.id,
+          type: 'reschedule_required',
+          ctx: {
+            doctorName: appt.doctor_name,
+            apptDate: appt.appt_date,
+            apptTime: appt.appt_time,
+            // The reschedule wording asks for a reason the patient can read;
+            // "the doctor's window was deleted" is internal vocabulary, and
+            // what it means to them is that the clinic hours changed.
+            blockReason: 'the clinic hours for that day changed',
+          },
+          channels: ['in_app', 'email', 'sms'],
+        })
+      )
+    );
+
+    res.json({ ok: true, affected: affected.length });
   })
 );
 

@@ -109,22 +109,38 @@
   }
 
   /* Table chrome lives on the table, not on every <th>/<td>, so a page can add
-     a column without also remembering the padding and border recipe. */
+     a column without also remembering the padding and border recipe.
+
+     Every descendant part is wrapped in :where(), which contributes no
+     specificity — so each of these rules weighs exactly one class and the
+     utilities emitted after them always win. Without it `.table-base thead th`
+     (0,1,2) outranks `.text-right` (0,1,0) and a right-aligned header silently
+     stays left while its cells move: the alignment bug this file's own styling
+     rule was written to prevent. */
   .table-base {
     @apply w-full border-collapse text-sm;
   }
-  .table-base thead th {
+  .table-base :where(thead th) {
     @apply whitespace-nowrap border-b border-slate-200 px-4 py-3 text-left
            text-[0.7rem] font-bold uppercase tracking-wider text-slate-500;
   }
-  .table-base tbody td {
+  .table-base :where(tbody td) {
     @apply border-b border-slate-100 px-4 py-3 align-middle;
   }
-  .table-base tbody tr:last-child td {
+  .table-base :where(tbody tr:last-child td) {
     @apply border-b-0;
   }
-  .table-base tbody tr:hover {
+  .table-base :where(tbody tr:hover) {
     @apply bg-slate-50;
+  }
+
+  /* The scroll container around a table. It owns the sideways scrolling so the
+     page never does: `html` is overflow-x: hidden, so a table that escapes this
+     box is not scrolled to — it is silently cut off, which is how an "Approve"
+     button came to render as "Appro". `contain: paint` is deliberately absent;
+     the only thing allowed to clip here is this box's own overflow. */
+  .table-scroll {
+    @apply w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain;
   }
 
   /* Tone (background + text colour) is applied by the caller: the same shape

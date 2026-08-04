@@ -67,11 +67,75 @@ router.get(
 );
 
 /**
+ * The chart behind the workload report: one headline block and one point per
+ * day the physician had anything on the book.
+ *
+ * This is the exception to the "no SQL in this file" rule at the top, and it is
+ * a deliberate one. There is no admin counterpart to share with — the clinic
+ * report is a table of physicians, this is one physician's own shape over time
+ * — so there is no second copy for it to drift from. What the two reports do
+ * share, the per-physician row, still comes from workloadRows.
+ *
+ * The counts here deliberately span every status, including the two that
+ * workloadRows excludes from "booked" (a pending request nobody approved, a
+ * cancelled slot that went back on sale). That is why they are reported as
+ * named statuses instead of a single number: `totals.pending + totals.confirmed
+ * + ...` will not equal the table's `appointments` figure, and it should not —
+ * the table measures committed practice time, this measures what happened to
+ * everything that was asked for.
+ *
+ * `patients` is a distinct count over that same set. A patient booked four
+ * times in a fortnight is one person on the physician's panel, which is the
+ * question the tile answers; summing appointments answers a different one, and
+ * both are on screen together.
+ *
+ * by_day carries only the four resolved-or-live outcomes the chart plots. Days
+ * with nothing on the book produce no row: the range can be a quarter, and
+ * padding it with empty weekends would put more zeroes than data through the
+ * wire for a chart that reads better with gaps left as gaps.
+ */
+async function workloadChart(doctorId, from, to) {
+  const params = [doctorId, from, to];
+  const [totals, byDay] = await Promise.all([
+    db.one(
+      `SELECT COUNT(DISTINCT a.patient_id)::int                  AS patients,
+              COUNT(*) FILTER (WHERE a.status = 'pending')::int   AS pending,
+              COUNT(*) FILTER (WHERE a.status = 'confirmed')::int AS confirmed,
+              COUNT(*) FILTER (WHERE a.status = 'completed')::int AS completed,
+              COUNT(*) FILTER (WHERE a.status = 'cancelled')::int AS cancelled,
+              COUNT(*) FILTER (WHERE a.status = 'no_show')::int   AS no_show
+       FROM appointments a
+       WHERE a.doctor_id = $1 AND a.appt_date BETWEEN $2::date AND $3::date`,
+      params
+    ),
+    db.query(
+      `SELECT a.appt_date AS date,
+              COUNT(*) FILTER (WHERE a.status = 'completed')::int AS completed,
+              COUNT(*) FILTER (WHERE a.status = 'confirmed')::int AS confirmed,
+              COUNT(*) FILTER (WHERE a.status = 'cancelled')::int AS cancelled,
+              COUNT(*) FILTER (WHERE a.status = 'no_show')::int   AS no_show
+       FROM appointments a
+       WHERE a.doctor_id = $1 AND a.appt_date BETWEEN $2::date AND $3::date
+       GROUP BY a.appt_date
+       ORDER BY a.appt_date`,
+      params
+    ),
+  ]);
+
+  return { totals, by_day: byDay };
+}
+
+/**
  * GET /api/doctor/reports/workload?from=&to=
  *
  * The physician's own appointments, booked hours and utilization. One row —
  * the same row the admin report shows for them, computed the same way, so the
  * two views agree by construction.
+ *
+ * `totals` and `by_day` are added alongside the standard { rows, meta }
+ * envelope rather than folded into it: the table component and the CSV exporter
+ * read `rows` and nothing else, so the chart's data has to arrive as extra keys
+ * or it would turn into columns nobody asked for in every exported file.
  */
 router.get(
   '/workload',
@@ -79,8 +143,12 @@ router.get(
     const range = parseRange(req.query);
     if (range.error) return res.status(400).json({ error: range.error });
 
-    const rows = await workloadRows(range.from, range.to, req.doctor.id);
-    res.json(report(rows, range.from, range.to));
+    const [rows, chart] = await Promise.all([
+      workloadRows(range.from, range.to, req.doctor.id),
+      workloadChart(req.doctor.id, range.from, range.to),
+    ]);
+
+    res.json({ ...report(rows, range.from, range.to), ...chart });
   })
 );
 

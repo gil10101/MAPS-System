@@ -12,14 +12,15 @@
  * wins without `!important`.
  */
 import {
-  useEffect, useRef, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
   type ButtonHTMLAttributes, type InputHTMLAttributes, type LabelHTMLAttributes,
   type ReactNode, type SelectHTMLAttributes, type TdHTMLAttributes,
   type TextareaHTMLAttributes, type ThHTMLAttributes,
 } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowLeft, Loader2, MoreHorizontal, X, type LucideIcon,
+  AlertTriangle, ArrowLeft, ChevronDown, ChevronUp, ChevronsUpDown, Loader2,
+  MoreHorizontal, X, type LucideIcon,
 } from 'lucide-react';
 import {
   PATIENT_STATUS_LABEL, STAFF_STATUS_LABEL, STATUS_TONE, initials,
@@ -271,29 +272,75 @@ export function FilterBar({ className, children }: { className?: string; childre
 // Tables
 // ===========================================================================
 
+interface TableProps {
+  /**
+   * Floor for the table's width, so columns get room to breathe instead of
+   * being shredded onto three lines each. Below it the container scrolls.
+   * Pass `false` on a genuinely narrow table (three or four short columns) that
+   * has no business scrolling on a phone.
+   */
+  minWidth?: string | false;
+  className?: string;
+  children: ReactNode;
+}
+
 /**
- * Wraps the table in its own scroll container: a wide report may scroll
- * sideways, but it must never make the whole page scroll sideways.
+ * A table plus the scroll container that owns its sideways overflow.
+ *
+ * The two belong together, which is why this is one component and not a pair
+ * a page has to remember to nest. `html` is `overflow-x: hidden`, so a table
+ * that escapes this box is not scrolled to, it is silently sheared off at the
+ * panel edge — the reason an "Approve" button used to render as "Appro".
+ *
+ * Known limitation, unchanged from before and called out so it is not
+ * rediscovered as a bug: `overflow-x: auto` forces `overflow-y` to `auto` too —
+ * CSS has no "scroll one axis, overflow the other" — so a RowMenu opened on the
+ * very last row is clipped at the bottom of this box. Escaping it needs the
+ * menu rendered through a portal, which is a change to RowMenu, not to here.
  */
-export function Table({ className, children }: { className?: string; children: ReactNode }) {
+export function Table({ minWidth = '46rem', className, children }: TableProps) {
   return (
-    <div className="w-full overflow-x-auto">
-      <table className={cx('table-base', className)}>{children}</table>
+    <div className="table-scroll">
+      <table
+        className={cx('table-base', className)}
+        style={minWidth === false ? undefined : { minWidth }}
+      >
+        {children}
+      </table>
     </div>
   );
 }
 
+export type CellAlign = 'left' | 'center' | 'right';
+
+const ALIGN_CLASS: Record<CellAlign, string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+};
+
 interface CellProps {
-  align?: 'left' | 'center' | 'right';
+  /**
+   * Declared on the header and repeated on its cells. Always emitted as an
+   * explicit class — a bare <th> is centred by the browser, and the shared
+   * `.table-base` rule deliberately carries no specificity to fight with.
+   */
+  align?: CellAlign;
+  /**
+   * Size this column to its content and never wrap it. The action column is
+   * the one a row is actually used through: if the browser is allowed to steal
+   * width from it, the buttons are what get squeezed.
+   */
+  fit?: boolean;
 }
 
 export function Th({
-  align = 'left', className, children, ...rest
+  align = 'left', fit, className, children, ...rest
 }: ThHTMLAttributes<HTMLTableCellElement> & CellProps) {
   return (
     <th
       scope="col"
-      className={cx(align === 'right' && 'text-right', align === 'center' && 'text-center', className)}
+      className={cx(ALIGN_CLASS[align], fit && 'w-px whitespace-nowrap', className)}
       {...rest}
     >
       {children}
@@ -302,15 +349,168 @@ export function Th({
 }
 
 export function Td({
-  align = 'left', className, children, ...rest
+  align = 'left', fit, className, children, ...rest
 }: TdHTMLAttributes<HTMLTableCellElement> & CellProps) {
   return (
     <td
-      className={cx(align === 'right' && 'text-right', align === 'center' && 'text-center', className)}
+      className={cx(ALIGN_CLASS[align], fit && 'w-px whitespace-nowrap', className)}
       {...rest}
     >
       {children}
     </td>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sorting
+// ---------------------------------------------------------------------------
+
+export type SortDir = 'asc' | 'desc';
+
+/** What `useSort` hands back to the headers so they can render and be clicked. */
+export interface SortController<T> {
+  key: keyof T & string;
+  dir: SortDir;
+  /** Same column flips direction; a different column starts ascending. */
+  toggle: (key: keyof T & string) => void;
+}
+
+/** '' counts as absent: a blank cell is missing data, not the empty string. */
+function isBlank(value: unknown): boolean {
+  return value === null || value === undefined || value === '';
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}([T ]|$)/;
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+/**
+ * Order two present values by what they are rather than by how they print.
+ *
+ * The distinction that matters: '9:30' sorts before '10:00' as a time and after
+ * it as a string, and '2026-01-02' compared as text only happens to be right
+ * because the format is zero-padded. Reading the type first means a column of
+ * times and a column of names both sort the way the reader expects.
+ *
+ * Numbers arriving as strings (node-postgres returns NUMERIC as text) are
+ * covered by localeCompare's `numeric` collation rather than by parsing, so a
+ * column mixing '9' and '9.5' still orders correctly.
+ */
+function compareValues(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
+  if (a instanceof Date && b instanceof Date) return a.getTime() - b.getTime();
+
+  const x = String(a);
+  const y = String(b);
+
+  if (DATE_RE.test(x) && DATE_RE.test(y)) {
+    const dx = Date.parse(x);
+    const dy = Date.parse(y);
+    if (!isNaN(dx) && !isNaN(dy)) return dx - dy;
+  }
+  if (TIME_RE.test(x) && TIME_RE.test(y)) {
+    const toMinutes = (t: string) => {
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    return toMinutes(x) - toMinutes(y);
+  }
+  return x.localeCompare(y, undefined, { sensitivity: 'base', numeric: true });
+}
+
+/**
+ * Client-side sorting for a table that already holds all of its rows.
+ *
+ * Sorting here rather than on the server because these tables are a clinic's
+ * day or month — hundreds of rows at the outside — and a round trip to reorder
+ * data the browser is already holding is a round trip the user waits through.
+ *
+ * Blank cells always sink to the bottom, in both directions: "no next visit"
+ * is not the earliest visit, and flipping the arrow should not float a column
+ * of dashes to the top.
+ */
+export function useSort<T extends object>(
+  rows: T[],
+  initialKey: keyof T & string,
+  initialDir: SortDir = 'asc'
+): { rows: T[]; sort: SortController<T> } {
+  const [key, setKey] = useState<keyof T & string>(initialKey);
+  const [dir, setDir] = useState<SortDir>(initialDir);
+
+  // Written flat rather than as a setDir() nested in a setKey() updater: React
+  // may run an updater twice in StrictMode, and a direction flip that happens
+  // twice is a direction flip that never happened.
+  const toggle = useCallback(
+    (next: keyof T & string) => {
+      if (next === key) {
+        setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setKey(next);
+        setDir('asc');
+      }
+    },
+    [key]
+  );
+
+  const sorted = useMemo(() => {
+    // Copy first: sort() is in place, and mutating the caller's array would
+    // reorder state React still believes it owns.
+    return [...rows].sort((left, right) => {
+      const a = left[key];
+      const b = right[key];
+      const aBlank = isBlank(a);
+      const bBlank = isBlank(b);
+      if (aBlank || bBlank) return aBlank && bBlank ? 0 : aBlank ? 1 : -1;
+      const order = compareValues(a, b);
+      return dir === 'asc' ? order : -order;
+    });
+  }, [rows, key, dir]);
+
+  return { rows: sorted, sort: { key, dir, toggle } };
+}
+
+interface SortableThProps<T> extends CellProps {
+  sortKey: keyof T & string;
+  sort: SortController<T>;
+  className?: string;
+  children: ReactNode;
+}
+
+/**
+ * A column header that sorts. The control is a real <button> so it is reachable
+ * by keyboard and announced as pressable, and `aria-sort` on the <th> is what
+ * tells a screen reader which column the table is currently ordered by — the
+ * arrow glyph alone says that to sighted users only.
+ */
+export function SortableTh<T>({
+  sortKey, sort, align = 'left', fit, className, children,
+}: SortableThProps<T>) {
+  const active = sort.key === sortKey;
+  const Icon = !active ? ChevronsUpDown : sort.dir === 'asc' ? ChevronUp : ChevronDown;
+
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={cx(ALIGN_CLASS[align], fit && 'w-px whitespace-nowrap', className)}
+    >
+      <button
+        type="button"
+        onClick={() => sort.toggle(sortKey)}
+        // Full 44px target on a phone, natural header height on a pointer
+        // device — the same trade the compact button size makes.
+        className={cx(
+          'inline-flex min-h-tap items-center gap-1 text-inherit hover:text-slate-900 md:min-h-0',
+          align === 'right' && 'flex-row-reverse'
+        )}
+      >
+        {children}
+        <Icon
+          aria-hidden="true"
+          className={cx('h-3.5 w-3.5', active ? 'text-slate-900' : 'text-slate-300')}
+        />
+      </button>
+    </th>
   );
 }
 
@@ -504,6 +704,84 @@ export function StatCard({ label, value, icon: Icon, accent, hint }: StatCardPro
   );
 }
 
+export interface BarDatum {
+  label: string;
+  value: number;
+  /** Meaning, not colour: a cancelled count is red wherever it is drawn. */
+  tone?: Tone;
+}
+
+const BAR_FILL: Record<Tone, string> = {
+  green: 'bg-emerald-500',
+  amber: 'bg-amber-500',
+  red: 'bg-red-500',
+  slate: 'bg-slate-400',
+  blue: 'bg-accent-600',
+};
+
+interface StatusBarChartProps {
+  data: BarDatum[];
+  /** Shown when there is nothing to draw. Say what would put data here. */
+  empty?: ReactNode;
+  className?: string;
+}
+
+/**
+ * Horizontal bars, each sized as a share of the largest value in the set.
+ *
+ * No charting library: a bar whose width is a percentage of a maximum is
+ * something CSS does correctly at every viewport width on its own, and a list
+ * of counts does not earn a dependency that ships a layout engine. The width
+ * is the one inline style — it is a runtime ratio, which a utility class
+ * cannot express without generating a class per percentage point.
+ *
+ * The bars are decorative and hidden from assistive technology: every figure
+ * they encode is sitting next to them as text, so announcing both would read
+ * the table twice.
+ */
+export function StatusBarChart({ data, empty, className }: StatusBarChartProps) {
+  const max = Math.max(0, ...data.map((d) => d.value));
+
+  // All-zero is a real state, not a chart: five empty tracks tell the reader
+  // less than one sentence does.
+  if (data.length === 0 || max === 0) {
+    return (
+      <p className={cx('text-sm text-slate-500', className)}>
+        {empty ?? 'Nothing to chart yet.'}
+      </p>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {data.map((d) => {
+        const pct = Math.round((d.value / max) * 100);
+        return (
+          <div key={d.label} className="mb-3 last:mb-0">
+            <div className="mb-1 text-sm text-slate-600">{d.label}</div>
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-100"
+              >
+                <span
+                  className={cx('block h-full rounded-full', BAR_FILL[d.tone ?? 'blue'])}
+                  // A count of 1 against a max of 400 is still a count of 1:
+                  // floor a non-zero bar at a visible sliver.
+                  style={{ width: `${d.value > 0 ? Math.max(pct, 2) : 0}%` }}
+                />
+              </span>
+              <span className="min-w-[2.25rem] flex-none text-right text-sm font-bold tabular-nums text-slate-900">
+                {d.value}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Avatar({
   name, size = 'md', className,
 }: { name: string | null | undefined; size?: 'sm' | 'md'; className?: string }) {
@@ -596,16 +874,30 @@ export function RowMenu({ children, label = 'More actions' }: { children: ReactN
 }
 
 export function MenuItem({
-  onClick, children, danger, icon: Icon,
-}: { onClick: () => void; children: ReactNode; danger?: boolean; icon?: LucideIcon }) {
+  onClick, children, danger, icon: Icon, disabled, title,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  danger?: boolean;
+  icon?: LucideIcon;
+  /** Present but not yet allowed — say why in `title` rather than hiding it. */
+  disabled?: boolean;
+  title?: string;
+}) {
   return (
     <button
       type="button"
       role="menuitem"
+      disabled={disabled}
+      title={title}
       onClick={onClick}
       className={cx(
         'flex min-h-tap w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium',
-        danger ? 'text-red-700 hover:bg-red-50' : 'text-slate-900 hover:bg-slate-100'
+        disabled
+          ? 'cursor-not-allowed text-slate-400'
+          : danger
+            ? 'text-red-700 hover:bg-red-50'
+            : 'text-slate-900 hover:bg-slate-100'
       )}
     >
       {Icon && <Icon className="h-4 w-4" aria-hidden="true" />}

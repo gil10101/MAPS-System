@@ -137,17 +137,39 @@ router.get(
 // ---------------------------------------------------------------------------
 
 /**
+ * "The visit's start moment has passed", decided by the database clock.
+ *
+ * A physician can only close out a visit that has actually come round, so both
+ * outcome routes below read this and both write behind it. It is SQL rather
+ * than a Date comparison in Node because the only clock allowed to answer is
+ * the one the appointment is stored against: a browser in another timezone, a
+ * machine with the wrong date, or a tab left open since yesterday must not be
+ * able to talk the server into completing a 15:00 slot at breakfast.
+ *
+ * `appt_date + appt_time::time` rebuilds the start moment from the two columns
+ * it is split across; comparing it to now() resolves it in the server's
+ * timezone, which is the clinic's.
+ */
+const HAS_STARTED = `(a.appt_date + a.appt_time::time) <= now()`;
+
+/**
  * Appointment rows as staff see them: the patient's name and contact details
  * (a physician looking at their day needs to know who is coming) plus the
  * site, because a doctor can hold clinic in more than one building in a week.
  * `notes` is included — visit notes are staff-only and never leave this shape
  * for a patient-facing route.
+ *
+ * `has_started` ships with every row so the portal can disable Complete and
+ * Didn't attend with an explanation instead of hiding them, and so the button
+ * state and the server's refusal are the same expression rather than two
+ * clocks that can disagree.
  */
 const APPT_SELECT = `
   SELECT a.id, a.patient_id, a.doctor_id, a.location_id,
          a.appt_date, a.appt_time, a.reason, a.status,
          a.reschedule_required, a.cancel_reason, a.cancelled_by, a.cancelled_at,
          a.approved_at, a.rescheduled_from_id, a.notes, a.created_at,
+         ${HAS_STARTED} AS has_started,
          u.full_name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
          p.date_of_birth,
          l.name AS location_name,
@@ -203,6 +225,70 @@ router.get(
 );
 
 /**
+ * Recording an outcome — completed or didn't attend — is the physician's call
+ * and nobody else's, and both outcomes answer to the same two rules: the visit
+ * must have been approved, and it must have come round. They therefore share
+ * one loader and one gate. Two copies of this logic is how a rule ends up
+ * enforced on one route and quietly missing from the other.
+ *
+ * Carries the patient's user id and the site name so a route that goes on to
+ * notify does not need a second round trip for them.
+ */
+function loadOwnVisit(doctorId, apptId) {
+  return db.one(
+    `SELECT a.id, a.status, a.appt_date, a.appt_time,
+            ${HAS_STARTED} AS has_started,
+            u.id AS patient_user_id, l.name AS location_name
+     FROM appointments a
+     JOIN patients p ON p.id = a.patient_id
+     JOIN users u    ON u.id = p.user_id
+     LEFT JOIN locations l ON l.id = a.location_id
+     WHERE a.id = $1 AND a.doctor_id = $2`,
+    [apptId, doctorId]
+  );
+}
+
+/**
+ * The refusals worded for each outcome. A physician told only "not allowed"
+ * goes looking for a bug, so each message names what is in the way — the
+ * approval that has not happened, or the appointment that has not started yet.
+ */
+const OUTCOME_REFUSALS = {
+  completed: {
+    pending:
+      'This visit is still pending approval. Clinic staff have to confirm it before it can be completed.',
+    early:
+      'This visit has not happened yet. It can be completed once its start time has passed.',
+  },
+  no_show: {
+    pending:
+      'This visit is still pending approval. Clinic staff have to confirm it before non-attendance can be recorded.',
+    early:
+      'This visit has not happened yet. Non-attendance can only be recorded once its start time has passed.',
+  },
+};
+
+/**
+ * Why this visit may not be closed out, or null if it may.
+ *
+ * Both blocks are 409 rather than 403: the physician is allowed to make this
+ * transition, the appointment is simply not in a state that can accept it yet.
+ *
+ * @param {object} visit row from loadOwnVisit
+ * @param {'completed'|'no_show'} outcome
+ */
+function outcomeRefusal(visit, outcome) {
+  const wording = OUTCOME_REFUSALS[outcome];
+  if (visit.status !== 'confirmed') {
+    return visit.status === 'pending'
+      ? wording.pending
+      : `This visit is already recorded as ${STAFF_STATUS_LABEL[visit.status]}.`;
+  }
+  if (!visit.has_started) return wording.early;
+  return null;
+}
+
+/**
  * PATCH /api/doctor/appointments/:id/complete — close out a visit.
  * Body: { notes } — the clinical visit note, required.
  *
@@ -213,6 +299,10 @@ router.get(
  *
  * Completing without documenting is the corner real systems refuse to cut, so
  * the note is a hard requirement rather than a prompt.
+ *
+ * The UPDATE repeats both conditions in its WHERE clause instead of trusting
+ * the read above. Between the two an admin can mark the same slot a no-show,
+ * and only one of them may set the outcome the reports are built from.
  */
 router.patch(
   '/appointments/:id/complete',
@@ -225,32 +315,24 @@ router.patch(
       return res.status(400).json({ error: 'A visit note is required to complete a visit.' });
     }
 
-    const appt = await db.one(
-      `SELECT a.id, a.status, a.appt_date, a.appt_time,
-              u.id AS patient_user_id, l.name AS location_name
-       FROM appointments a
-       JOIN patients p ON p.id = a.patient_id
-       JOIN users u    ON u.id = p.user_id
-       LEFT JOIN locations l ON l.id = a.location_id
-       WHERE a.id = $1 AND a.doctor_id = $2`,
-      [id, req.doctor.id]
-    );
+    const appt = await loadOwnVisit(req.doctor.id, id);
     if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
 
-    if (appt.status !== 'confirmed') {
-      const message =
-        appt.status === 'pending'
-          ? 'This visit is still pending approval. Clinic staff have to confirm it before it can be completed.'
-          : `This visit is already recorded as ${STAFF_STATUS_LABEL[appt.status]}.`;
-      return res.status(409).json({ error: message });
-    }
+    const refusal = outcomeRefusal(appt, 'completed');
+    if (refusal) return res.status(409).json({ error: refusal });
 
-    await db.query(
-      `UPDATE appointments
+    const updated = await db.one(
+      `UPDATE appointments AS a
        SET status = 'completed', notes = $2, updated_at = now()
-       WHERE id = $1`,
+       WHERE a.id = $1 AND a.status = 'confirmed' AND ${HAS_STARTED}
+       RETURNING a.id`,
       [appt.id, notes]
     );
+    if (!updated) {
+      return res.status(409).json({
+        error: 'This visit was just updated by someone else. Reload and try again.',
+      });
+    }
 
     // Side effect, not a condition: notify() swallows its own failures so a
     // tray insert can never undo a completed visit.
@@ -265,6 +347,62 @@ router.patch(
         locationName: appt.location_name,
       },
     });
+
+    res.json({ appointment: await db.one(`${APPT_SELECT} WHERE a.id = $1`, [appt.id]) });
+  })
+);
+
+/**
+ * PATCH /api/doctor/appointments/:id/no-show — the patient never arrived.
+ * Body: { reason } — required.
+ *
+ * This is the physician's call rather than the front desk's: the person who
+ * held the slot open is the one who knows the patient was not in it. Reachable
+ * from `confirmed` only, and only once the start time has passed — before that
+ * there is nothing to be absent from, and a slot marked missed in the morning
+ * would burn an appointment the patient could still turn up to.
+ *
+ * The reason lands in cancel_reason, matching how an admin records the same
+ * outcome: the Cancellation report covers cancellations and no-shows together
+ * and reads one column for both. cancelled_by/cancelled_at stay null — nobody
+ * cancelled this, the time was simply lost.
+ *
+ * No notification is sent. The clinic decides how it chases a missed
+ * appointment (a call, a letter, a fee), and a tray message telling a patient
+ * they did not attend is a decision for the practice, not a side effect of the
+ * physician filing the outcome.
+ */
+router.patch(
+  '/appointments/:id/no-show',
+  wrap(async (req, res) => {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Appointment not found.' });
+
+    const reason = String((req.body || {}).reason || '').trim();
+    if (!reason) {
+      return res
+        .status(400)
+        .json({ error: 'A reason is required to record that a patient did not attend.' });
+    }
+
+    const appt = await loadOwnVisit(req.doctor.id, id);
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+
+    const refusal = outcomeRefusal(appt, 'no_show');
+    if (refusal) return res.status(409).json({ error: refusal });
+
+    const updated = await db.one(
+      `UPDATE appointments AS a
+       SET status = 'no_show', cancel_reason = $2, updated_at = now()
+       WHERE a.id = $1 AND a.status = 'confirmed' AND ${HAS_STARTED}
+       RETURNING a.id`,
+      [appt.id, reason]
+    );
+    if (!updated) {
+      return res.status(409).json({
+        error: 'This visit was just updated by someone else. Reload and try again.',
+      });
+    }
 
     res.json({ appointment: await db.one(`${APPT_SELECT} WHERE a.id = $1`, [appt.id]) });
   })
@@ -341,6 +479,132 @@ router.get(
       [req.doctor.id]
     );
     res.json({ patients: rows });
+  })
+);
+
+const SEARCH_DEFAULT_LIMIT = 20;
+const SEARCH_MAX_LIMIT = 50;
+
+/**
+ * Resolve ?limit=&offset=.
+ *
+ * The ceiling is not the caller's to raise: this endpoint exists precisely so
+ * that a screen cannot pull a whole panel down, and an unbounded `limit` would
+ * hand back the thing the pagination was added to prevent. An oversized limit
+ * is clamped rather than rejected — the response echoes the limit it actually
+ * used, so a caller asking for 500 can see it was given 50 — while a limit
+ * that is not a number at all is a client bug and says so.
+ *
+ * @returns {{limit: number, offset: number}|{error: string}}
+ */
+function parsePaging(query) {
+  const num = (value, fallback) =>
+    value === undefined || String(value).trim() === '' ? fallback : Number(value);
+
+  const limit = num(query.limit, SEARCH_DEFAULT_LIMIT);
+  const offset = num(query.offset, 0);
+  if (!Number.isInteger(limit) || limit < 1) {
+    return { error: 'limit must be a whole number of 1 or more.' };
+  }
+  if (!Number.isInteger(offset) || offset < 0) {
+    return { error: 'offset must be a whole number of 0 or more.' };
+  }
+  return { limit: Math.min(limit, SEARCH_MAX_LIMIT), offset };
+}
+
+/**
+ * Make a typed % or _ search for itself instead of acting as a wildcard.
+ * Without this, one stray character silently turns a prefix search into "match
+ * everything" and the count the UI reports becomes nonsense.
+ */
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
+ * The panel this search runs over: patients this physician has a real booking
+ * with. `status <> 'cancelled'` is the same care-relationship test treatsPatient
+ * applies, so every row that comes back is a chart the doctor can actually open
+ * — a result that 403s when clicked is worse than no result.
+ *
+ * $1 doctor id, $2 the escaped search term. The term is matched as a prefix
+ * (`term%`) against the two name columns and the generated full_name, so the
+ * comparison stays index-friendly on a panel with thousands of patients; the
+ * contains-match the public doctor directory uses cannot use an index and that
+ * table is small enough not to care. full_name is matched as well as its parts
+ * so "Ana Ruiz" finds the patient the way a doctor would type the name.
+ *
+ * An empty term short-circuits to true rather than to a '%' pattern: the first
+ * page of the panel is the sensible answer to an empty box, and it is one the
+ * planner can serve without touching the name columns at all.
+ */
+const PANEL_MATCH = `
+  a.doctor_id = $1
+  AND a.status <> 'cancelled'
+  AND ($2::text = ''
+       OR u.first_name ILIKE $2 || '%'
+       OR u.last_name  ILIKE $2 || '%'
+       OR u.full_name  ILIKE $2 || '%')
+`;
+
+/**
+ * GET /api/doctor/patients/search?q=&limit=&offset=
+ *   -> { patients, total, limit, offset }
+ *
+ * The picker behind the Reports screen. GET /patients returns the whole panel
+ * and is fine for a list a physician scrolls; choosing one patient out of a
+ * full practice is a different problem, and a dropdown holding every name is
+ * how that screen stops working the year the practice grows.
+ *
+ * The filter is SQL, never a .filter() over a fetched table: paging a list the
+ * server already had to load in full would be a pretence, and it would put the
+ * whole panel through Node on every keystroke.
+ *
+ * `total` is the unpaginated match count so the UI can say "showing 20 of 240"
+ * — it is a second query rather than a COUNT(*) OVER() on the page, which would
+ * report 0 matches for any offset past the end and make the caption lie exactly
+ * when the user has paged too far.
+ *
+ * visit_count and last_visit count `completed` appointments only, the same way
+ * GET /patients defines them: a booking that was never attended is not a visit,
+ * and two figures for the same patient must not contradict each other between
+ * two screens.
+ */
+router.get(
+  '/patients/search',
+  wrap(async (req, res) => {
+    const paging = parsePaging(req.query);
+    if (paging.error) return res.status(400).json({ error: paging.error });
+
+    const q = escapeLike(typeof req.query.q === 'string' ? req.query.q.trim() : '');
+    const match = [req.doctor.id, q];
+
+    const [totals, patients] = await Promise.all([
+      db.one(
+        `SELECT COUNT(DISTINCT p.id)::int AS n
+         FROM patients p
+         JOIN users u        ON u.id = p.user_id
+         JOIN appointments a ON a.patient_id = p.id
+         WHERE ${PANEL_MATCH}`,
+        match
+      ),
+      db.query(
+        `SELECT p.id AS patient_id, u.full_name, u.first_name, u.last_name,
+                p.date_of_birth,
+                COUNT(*) FILTER (WHERE a.status = 'completed')::int AS visit_count,
+                MAX(a.appt_date) FILTER (WHERE a.status = 'completed') AS last_visit
+         FROM patients p
+         JOIN users u        ON u.id = p.user_id
+         JOIN appointments a ON a.patient_id = p.id
+         WHERE ${PANEL_MATCH}
+         GROUP BY p.id, u.id
+         ORDER BY u.last_name, u.first_name
+         LIMIT $3 OFFSET $4`,
+        [...match, paging.limit, paging.offset]
+      ),
+    ]);
+
+    res.json({ patients, total: totals.n, limit: paging.limit, offset: paging.offset });
   })
 );
 

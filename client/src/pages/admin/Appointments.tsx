@@ -14,8 +14,8 @@
  * Overview dashboard links straight here with ?status=pending, and a scheduler
  * who has narrowed to one site and one week can bookmark or send that view.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Calendar, Check, FileText } from 'lucide-react';
 import {
   adminListAppointments, adminListDoctors, adminListLocations,
@@ -25,8 +25,8 @@ import {
 } from '../../lib/api';
 import {
   Alert, Button, Card, EmptyState, Field, FilterBar, Input, MenuItem, Modal,
-  PageHeader, ReasonModal, RescheduleBadge, RowMenu, Select, Spinner,
-  StatusBadge, Table, Td, Textarea, Th,
+  PageHeader, ReasonModal, RescheduleBadge, RowMenu, Select, SortableTh, Spinner,
+  StatusBadge, Table, Td, Textarea, Th, cx, useSort,
 } from '../../components/ui';
 import { useToast } from '../../components/Toast';
 
@@ -134,13 +134,6 @@ export default function AdminAppointments() {
     }
   }
 
-  async function complete(appt: Appointment) {
-    if (await move(appt, 'completed')) {
-      toast(`Visit with ${appt.patient_name} recorded as completed.`, 'success');
-      load();
-    }
-  }
-
   async function submitReason(reason: string) {
     if (!reasonTarget) return;
     const { appt, kind } = reasonTarget;
@@ -183,12 +176,94 @@ export default function AdminAppointments() {
       ? 'Nothing is waiting for approval'
       : 'No appointments match these filters';
 
+  // The queue is drawn from the rows already on screen, so it always agrees
+  // with the table beneath it. Sorted soonest-first: the request that needs a
+  // decision most urgently is the one whose date arrives first.
+  const awaiting = useMemo(
+    () =>
+      (appointments || [])
+        .filter((a) => a.status === 'pending')
+        .sort((x, y) =>
+          x.appt_date === y.appt_date
+            ? x.appt_time.localeCompare(y.appt_time)
+            : x.appt_date.localeCompare(y.appt_date)
+        ),
+    [appointments]
+  );
+
+  const { rows: sorted, sort } = useSort<Appointment>(
+    appointments || [],
+    'appt_date',
+    'asc'
+  );
+
   return (
     <div>
       <PageHeader
         title="Appointments"
         subtitle="Approve incoming requests, then record how each visit ended."
       />
+
+      {/*
+        An appointment only leaves `pending` when an administrator approves it,
+        so this queue is the job this screen exists for. It sits above the
+        filters because burying it behind one would mean the clinic's only
+        blocking task is the thing staff have to go looking for.
+      */}
+      {appointments && (
+        <Card
+          className={cx(
+            'mb-4',
+            awaiting.length > 0 && 'border-amber-300 bg-amber-50/60'
+          )}
+          title={
+            awaiting.length > 0
+              ? `${awaiting.length} ${awaiting.length === 1 ? 'request needs' : 'requests need'} approval`
+              : 'Nothing is waiting for approval'
+          }
+        >
+          {awaiting.length === 0 ? (
+            <p className="px-4 pb-4 text-sm text-slate-600">
+              Every request in this view has been dealt with. New bookings arrive here.
+            </p>
+          ) : (
+            <ul className="divide-y divide-amber-200/70">
+              {awaiting.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-slate-900">{a.patient_name}</div>
+                    <div className="text-xs text-slate-600">
+                      {formatDate(a.appt_date)} at {formatTime(a.appt_time)} ·{' '}
+                      <Link
+                        to={`/admin/physicians/${a.doctor_id}`}
+                        className="font-medium text-accent-600 hover:underline"
+                      >
+                        {a.doctor_name}
+                      </Link>
+                      {a.location_name ? ` · ${a.location_name}` : ''}
+                    </div>
+                    {a.reason && (
+                      <div className="truncate text-xs text-slate-500">{a.reason}</div>
+                    )}
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={Check}
+                    loading={busyId === a.id}
+                    onClick={() => approve(a)}
+                  >
+                    Approve
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
 
       <Card className="mb-4">
         <FilterBar>
@@ -273,24 +348,29 @@ export default function AdminAppointments() {
           <Table>
             <thead>
               <tr>
-                <Th>Patient</Th>
-                <Th>Physician</Th>
-                <Th>Location</Th>
-                <Th>Date &amp; time</Th>
+                <SortableTh sortKey="patient_name" sort={sort}>Patient</SortableTh>
+                <SortableTh sortKey="doctor_name" sort={sort}>Physician</SortableTh>
+                <SortableTh sortKey="location_name" sort={sort}>Location</SortableTh>
+                <SortableTh sortKey="appt_date" sort={sort}>Date &amp; time</SortableTh>
                 <Th>Reason</Th>
-                <Th>Status</Th>
+                <SortableTh sortKey="status" sort={sort}>Status</SortableTh>
                 <Th align="right">Actions</Th>
               </tr>
             </thead>
             <tbody>
-              {appointments.map((a) => (
+              {sorted.map((a) => (
                 <tr key={a.id}>
                   <Td>
                     <div className="font-semibold text-slate-900">{a.patient_name}</div>
                     <div className="text-xs text-slate-500">{a.patient_email}</div>
                   </Td>
                   <Td>
-                    <div className="text-slate-900">{a.doctor_name}</div>
+                    <Link
+                      to={`/admin/physicians/${a.doctor_id}`}
+                      className="font-medium text-accent-600 hover:underline"
+                    >
+                      {a.doctor_name}
+                    </Link>
                     <div className="text-xs text-slate-500">{a.specialty_name || ''}</div>
                   </Td>
                   <Td className="text-slate-500">{a.location_name || '—'}</Td>
@@ -324,15 +404,6 @@ export default function AdminAppointments() {
                           onClick={() => approve(a)}
                         >
                           Approve
-                        </Button>
-                      )}
-                      {a.status === 'confirmed' && (
-                        <Button
-                          size="sm"
-                          loading={busyId === a.id}
-                          onClick={() => complete(a)}
-                        >
-                          Complete
                         </Button>
                       )}
                       <RowMenu label={`Actions for ${a.patient_name}`}>

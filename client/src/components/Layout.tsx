@@ -8,6 +8,14 @@
  * The shell itself is the navy surface; page content floats on a white panel
  * inside it. On desktop that panel is the scroll container, which keeps the
  * sidebar and the notification tray fixed while a long report scrolls.
+ *
+ * Geometry, and why it is worth being exact about: the top bar is PHONE ONLY.
+ * At desktop it must not render at all, because a header that occupies a strip
+ * of height above the panel pushes the panel down and shortens it by the same
+ * amount — the panel then neither starts level with the sidebar nor reaches
+ * the bottom of the screen. So the panel is a full-height sibling of the
+ * sidebar with one equal margin on all four sides, and the tray the top bar
+ * used to carry moves into the sidebar header rather than being lost.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
@@ -95,6 +103,32 @@ const ADMIN_NAV: NavGroup[] = [
 /** How many links fit across a phone before the captions start truncating. */
 const MAX_TABS = 5;
 
+/** Tailwind's `md`, in the one place the shell needs to know it in JS. */
+const DESKTOP_QUERY = '(min-width: 768px)';
+
+/**
+ * The tray lives in the phone top bar and in the desktop sidebar — two
+ * different places in the tree, not one element that moves. Rendering both and
+ * hiding one with `md:hidden` would mount the component twice and poll the
+ * server twice for a tray only one of which is ever on screen, so the shell
+ * asks which breakpoint it is at and mounts exactly one.
+ */
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_QUERY).matches);
+
+  useEffect(() => {
+    const query = window.matchMedia(DESKTOP_QUERY);
+    const sync = () => setIsDesktop(query.matches);
+    // Re-read on mount as well as on change: the window can be resized between
+    // the initial render and this listener being attached.
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+
+  return isDesktop;
+}
+
 function Wordmark({ className }: { className?: string }) {
   return (
     <span className={cx('text-lg font-bold tracking-tight text-white', className)}>
@@ -111,8 +145,15 @@ function Wordmark({ className }: { className?: string }) {
  * Polls every 60s rather than opening a socket: the events here (a booking
  * approved, a refill decided) are minutes-scale, and a prototype that survives
  * a dropped connection by simply asking again is worth more than push.
+ *
+ * `align` is which edge the panel hangs from. In the phone top bar the bell is
+ * at the right of the screen so the panel opens leftwards; in the sidebar it
+ * would open off the left of the viewport, so there it opens rightwards over
+ * the content panel instead.
  */
-function NotificationTray() {
+function NotificationTray({
+  align = 'right', size = 'md',
+}: { align?: 'left' | 'right'; size?: 'sm' | 'md' }) {
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -180,6 +221,7 @@ function NotificationTray() {
     <div className="relative" ref={wrap}>
       <IconButton
         icon={Bell}
+        size={size}
         label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -196,7 +238,12 @@ function NotificationTray() {
       )}
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[22rem] max-w-[calc(100vw-2rem)] animate-fade-in overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-slate-200">
+        <div
+          className={cx(
+            'absolute top-[calc(100%+0.5rem)] z-50 w-[22rem] max-w-[calc(100vw-2rem)] animate-fade-in overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-slate-200',
+            align === 'right' ? 'right-0' : 'left-0'
+          )}
+        >
           <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
             <h3>Notifications</h3>
             <button
@@ -268,6 +315,7 @@ function NotificationTray() {
 export default function Layout() {
   const user = getUser();
   const [moreOpen, setMoreOpen] = useState(false);
+  const isDesktop = useIsDesktop();
 
   // Protected handles the redirect; rendering nothing avoids a flash of chrome
   // belonging to a user who is not signed in.
@@ -283,11 +331,17 @@ export default function Layout() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-navy-900 md:h-dvh md:flex-row md:overflow-hidden">
-      {/* Sidebar — tablet and up */}
-      <aside className="hidden w-sidebar flex-none flex-col px-3 py-6 md:flex">
-        <Link to={homeFor(user)} className="mb-6 px-2">
-          <Wordmark />
-        </Link>
+      {/* Sidebar — tablet and up. Its padding matches the panel's margin so the
+          wordmark and the panel's top edge start on the same line. */}
+      <aside className="hidden w-sidebar flex-none flex-col p-3 md:flex">
+        <div className="mb-6 flex items-center justify-between gap-2 pl-2">
+          <Link to={homeFor(user)}>
+            <Wordmark />
+          </Link>
+          {/* Compact here on purpose: a full 44px bell makes this row taller
+              than the wordmark and drops it below the panel's top edge. */}
+          {isDesktop && <NotificationTray align="left" size="sm" />}
+        </div>
 
         <nav className="flex-1 overflow-y-auto" aria-label="Main">
           {groups.map((g) => (
@@ -337,24 +391,28 @@ export default function Layout() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Topbar. On desktop it carries only the tray; the sidebar has the rest. */}
-        <header className="flex items-center gap-2 px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] md:px-3 md:pt-6">
-          <Link to={homeFor(user)} className="md:hidden">
+        {/* Top bar — phones only. `md:hidden` is load-bearing: at desktop this
+            row would otherwise still take height above the panel, which is
+            what shortened the panel and knocked it out of line. */}
+        <header className="flex items-center gap-2 px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] md:hidden">
+          <Link to={homeFor(user)}>
             <Wordmark />
           </Link>
           <div className="ml-auto flex items-center gap-2">
-            <NotificationTray />
-            <Avatar name={user.full_name} size="sm" className="bg-white/10 md:hidden" />
+            {!isDesktop && <NotificationTray />}
+            <Avatar name={user.full_name} size="sm" className="bg-white/10" />
             <IconButton
               icon={LogOut}
               label="Log out"
               onClick={logout}
-              className="bg-white/10 text-white hover:bg-white/20 md:hidden"
+              className="bg-white/10 text-white hover:bg-white/20"
             />
           </div>
         </header>
 
-        <main className="flex-1 bg-white md:m-3 md:mt-0 md:min-h-0 md:overflow-y-auto md:rounded-xl">
+        {/* The white panel. Equal margin on all four sides, full height of the
+            shell, and its own scrollbar so the sidebar stays put. */}
+        <main className="flex-1 bg-white md:m-3 md:min-h-0 md:overflow-y-auto md:rounded-xl">
           <div className="mx-auto w-full max-w-content px-4 pb-28 pt-6 sm:px-6 md:pb-12 lg:px-8">
             <Outlet />
           </div>
