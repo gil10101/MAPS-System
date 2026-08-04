@@ -29,3 +29,7 @@ Thumbs.db
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Source screenshots for the physician portraits. The cropped, optimised
+# versions committed under client/public/doctors are what the app serves.
+demo_doc_images/

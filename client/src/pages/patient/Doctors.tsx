@@ -201,7 +201,7 @@ export default function Doctors() {
           {doctors.map((d) => (
             <Card key={d.id} className="flex flex-col">
               <div className="flex items-start gap-3">
-                <Avatar name={d.full_name} />
+                <Avatar name={d.full_name} src={d.photo_url} />
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-slate-900">{d.full_name}</p>
                   <p className="truncate text-sm text-slate-500">
@@ -273,7 +273,7 @@ export default function Doctors() {
             )}
 
             <div className="mb-4 flex items-center gap-3">
-              <Avatar name={selected.full_name} />
+              <Avatar name={selected.full_name} src={selected.photo_url} />
               <div className="min-w-0">
                 <p className="truncate font-semibold text-slate-900">{selected.full_name}</p>
                 <p className="truncate text-sm text-slate-500">

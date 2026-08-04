@@ -56,7 +56,7 @@ const LOCATIONS_LATERAL = `
 const DIRECTORY_SELECT = `
   SELECT d.id, d.prefix, d.first_name, d.last_name, d.full_name,
          d.specialty_id, s.name AS specialty_name,
-         d.email, d.phone, d.bio, d.room,
+         d.email, d.phone, d.bio, d.room, d.photo_url,
          sites.locations
   FROM doctors d
   LEFT JOIN specialties s ON s.id = d.specialty_id

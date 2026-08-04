@@ -50,7 +50,7 @@ function parseId(value) {
 /** The doctors row belonging to the logged-in user, or null. */
 function doctorForUser(userId) {
   return db.one(
-    `SELECT d.id, d.user_id, d.prefix, d.first_name, d.last_name, d.full_name,
+    `SELECT d.id, d.user_id, d.prefix, d.first_name, d.last_name, d.full_name, d.photo_url,
             d.specialty_id, s.name AS specialty_name
      FROM doctors d
      LEFT JOIN specialties s ON s.id = d.specialty_id
@@ -111,7 +111,7 @@ router.get(
     const doctor = await db.one(
       `SELECT d.id, d.prefix, d.first_name, d.last_name, d.full_name,
               d.specialty_id, s.name AS specialty_name,
-              d.email, d.phone, d.bio, d.room, d.active, d.user_id,
+              d.email, d.phone, d.bio, d.room, d.photo_url, d.active, d.user_id,
               COALESCE((
                 SELECT json_agg(
                          json_build_object('id', l.id, 'name', l.name, 'city', l.city)

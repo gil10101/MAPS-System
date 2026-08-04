@@ -64,7 +64,8 @@ export function Card({ title, actions, className, children }: CardProps) {
 }
 
 interface PageHeaderProps {
-  title: string;
+  /** Usually a string; a node when the heading carries a portrait beside it. */
+  title: ReactNode;
   subtitle?: ReactNode;
   actions?: ReactNode;
   /** Renders a back link above the title — for detail pages like a chart. */
@@ -785,15 +786,44 @@ export function StatusBarChart({ data, empty, className }: StatusBarChartProps) 
   );
 }
 
+/**
+ * A person, as a portrait when one exists and as their initials when it does
+ * not. Both render at the same size, so a directory of physicians who mostly
+ * have photos does not jump around as it loads.
+ *
+ * A failed image falls back to the initials rather than leaving a broken frame:
+ * a missing file is the ordinary case for a physician onboarded this morning.
+ */
 export function Avatar({
-  name, size = 'md', className,
-}: { name: string | null | undefined; size?: 'sm' | 'md'; className?: string }) {
+  name, src, size = 'md', className,
+}: {
+  name: string | null | undefined;
+  src?: string | null;
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const box = size === 'sm' ? 'h-8 w-8 text-xs' : size === 'lg' ? 'h-20 w-20 text-xl' : 'h-11 w-11 text-sm';
+
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className={cx('flex-none rounded-full object-cover', box, className)}
+      />
+    );
+  }
+
   return (
     <span
       aria-hidden="true"
       className={cx(
         'grid flex-none place-items-center rounded-full bg-navy-900 font-bold text-white',
-        size === 'sm' ? 'h-8 w-8 text-xs' : 'h-11 w-11 text-sm',
+        box,
         className
       )}
     >

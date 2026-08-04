@@ -21,7 +21,7 @@ import {
   type Doctor, type DoctorLocation, type Specialty,
 } from '../../lib/api';
 import {
-  Alert, Badge, Button, Card, Checkbox, EmptyState, Field, Input, MenuItem,
+  Alert, Avatar, Badge, Button, Card, Checkbox, EmptyState, Field, Input, MenuItem,
   Modal, PageHeader, RowMenu, Select, Spinner, Table, Td, Textarea, Th,
 } from '../../components/ui';
 import { useToast } from '../../components/Toast';
@@ -299,12 +299,15 @@ export default function AdminDoctors() {
                 return (
                   <tr key={d.id}>
                     <Td>
-                      <Link
-                        to={`/admin/physicians/${d.id}`}
-                        className="font-semibold text-accent-600 hover:underline"
-                      >
-                        {d.full_name}
-                      </Link>
+                      <span className="flex items-center gap-2">
+                        <Avatar name={d.full_name} src={d.photo_url} size="sm" />
+                        <Link
+                          to={`/admin/physicians/${d.id}`}
+                          className="font-semibold text-accent-600 hover:underline"
+                        >
+                          {d.full_name}
+                        </Link>
+                      </span>
                     </Td>
                     <Td className="text-slate-500">{d.specialty_name || 'Unassigned'}</Td>
                     <Td>

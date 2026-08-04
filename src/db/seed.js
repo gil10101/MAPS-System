@@ -115,13 +115,13 @@ const DOCTORS = [
     sites: { midtown: [MON, TUE, WED], brooklyn: [THU, FRI] },
   },
   {
-    key: 'jdiaz', prefix: 'Dr.', first: 'Julia', last: 'Diaz', specialty: 'Dermatology',
+    key: 'jdiaz', prefix: 'Dr.', first: 'Javier', last: 'Diaz', specialty: 'Dermatology',
     email: 'jdiaz@medisync.health', phone: '718-555-0141', room: 'C-110',
     bio: 'Dermatologist focused on skin cancer screening, eczema, and acne treatment.',
     sites: { brooklyn: [MON, TUE, WED, THU, FRI] },
   },
   {
-    key: 'apatel', prefix: 'Dr.', first: 'Aisha', last: 'Patel', specialty: 'Pediatrics',
+    key: 'apatel', prefix: 'Dr.', first: 'Arjun', last: 'Patel', specialty: 'Pediatrics',
     email: 'apatel@medisync.health', phone: '718-555-0181', room: 'Q-12',
     bio: 'Pediatrician with a gentle approach to childhood wellness, asthma, and vaccinations.',
     sites: { queens: [MON, TUE, WED, THU, FRI] },
@@ -139,8 +139,8 @@ const DOCTORS = [
     sites: { midtown: [MON, TUE, WED, THU, FRI] },
   },
   {
-    key: 'lbennett', prefix: 'Dr.', first: 'Laura', last: 'Bennett', specialty: 'Family Medicine',
-    email: 'lbennett@medisync.health', phone: '718-555-0182', room: 'Q-04',
+    key: 'mbennett', prefix: 'Dr.', first: 'Michael', last: 'Bennett', specialty: 'Family Medicine',
+    email: 'mbennett@medisync.health', phone: '718-555-0182', room: 'Q-04',
     bio: 'Family medicine physician passionate about diabetes care and community health.',
     sites: { queens: [MON, TUE, WED, THU, FRI] },
   },
@@ -294,7 +294,7 @@ const APPOINTMENTS = [
   },
   {
     key: 'diabetes-review',
-    patient: 'anita', doctor: 'lbennett', week: -1, day: FRI, time: '09:30',
+    patient: 'anita', doctor: 'mbennett', week: -1, day: FRI, time: '09:30',
     reason: 'Diabetes management review', status: 'completed',
     notes: 'Type 2 diabetes review. HbA1c 7.4%, down from 8.1% six months ago. Feet examined, sensation '
       + 'intact with no ulceration. Continued metformin 500 mg twice daily. Retinal screening booked '
@@ -337,7 +337,7 @@ const APPOINTMENTS = [
     reason: 'Mole check', status: 'no_show', cancelReason: 'Did not attend, no contact',
   },
   {
-    patient: 'kevin', doctor: 'lbennett', week: -1, day: TUE, time: '14:30',
+    patient: 'kevin', doctor: 'mbennett', week: -1, day: TUE, time: '14:30',
     reason: 'Sports physical', status: 'no_show', cancelReason: 'Arrived too late to be seen',
   },
   {
@@ -361,7 +361,7 @@ const APPOINTMENTS = [
     cancelReason: 'Feeling better / no longer needed', cancelledBy: 'patient',
   },
   {
-    patient: 'anita', doctor: 'lbennett', week: -1, day: MON, time: '13:00',
+    patient: 'anita', doctor: 'mbennett', week: -1, day: MON, time: '13:00',
     reason: 'Medication review', status: 'cancelled',
     cancelReason: 'Provider unavailable', cancelledBy: 'practice',
   },
@@ -431,7 +431,7 @@ const APPOINTMENTS = [
     reason: 'Migraine follow-up', status: 'confirmed',
   },
   {
-    patient: 'kevin', doctor: 'lbennett', week: 0, day: WED, time: '14:00',
+    patient: 'kevin', doctor: 'mbennett', week: 0, day: WED, time: '14:00',
     reason: 'Sports physical', status: 'confirmed',
   },
   {
@@ -453,7 +453,7 @@ const APPOINTMENTS = [
     reason: 'Echocardiogram results', status: 'confirmed',
   },
   {
-    patient: 'anita', doctor: 'lbennett', week: 0, day: TUE, time: '11:00',
+    patient: 'anita', doctor: 'mbennett', week: 0, day: TUE, time: '11:00',
     reason: 'Diabetes review', status: 'confirmed',
   },
 
@@ -482,7 +482,7 @@ const APPOINTMENTS = [
     reason: 'Eczema review', status: 'confirmed',
   },
   {
-    patient: 'john', doctor: 'lbennett', week: 1, day: MON, time: '09:00',
+    patient: 'john', doctor: 'mbennett', week: 1, day: MON, time: '09:00',
     reason: 'Annual physical', status: 'pending',
   },
   {
@@ -547,7 +547,7 @@ const PRESCRIPTIONS = [
     allowed: 2, used: 1, status: 'active',
   },
   {
-    key: 'metformin', patient: 'anita', doctor: 'lbennett', appt: 'diabetes-review',
+    key: 'metformin', patient: 'anita', doctor: 'mbennett', appt: 'diabetes-review',
     medication: 'Metformin', dosage: '500 mg', frequency: 'twice daily with meals', duration: 'ongoing',
     instructions: 'Take with food to reduce stomach upset.',
     allowed: 5, used: 2, status: 'active',
@@ -638,7 +638,7 @@ const NOTIFICATIONS = [
   {
     user: 'lucia', type: 'refill_approved', hoursAgo: 190, read: true,
     title: 'Refill approved',
-    body: 'Dr. Julia Diaz approved your refill of Triamcinolone 0.1% cream. It has been sent to your pharmacy.',
+    body: 'Dr. Javier Diaz approved your refill of Triamcinolone 0.1% cream. It has been sent to your pharmacy.',
   },
   {
     user: 'marcus', appt: 'knee-bumped', type: 'appointment_cancelled', hoursAgo: 300, read: true,
@@ -648,7 +648,7 @@ const NOTIFICATIONS = [
   {
     user: 'kevin', type: 'refill_denied', hoursAgo: 260, read: true,
     title: 'Refill needs a visit first',
-    body: 'Dr. Aisha Patel would like to see Kevin before renewing the albuterol inhaler. Book a follow-up from Find a Doctor.',
+    body: 'Dr. Arjun Patel would like to see Kevin before renewing the albuterol inhaler. Book a follow-up from Find a Doctor.',
   },
   {
     user: 'admin', appt: 'bp-check', type: 'appointment_requested', hoursAgo: 30, read: false,
@@ -718,7 +718,7 @@ function placeAppointments() {
 // during a live demonstration. A fully booked physician has nothing to show.
 const FILL_TARGET = {
   skim: 0.72, rosei: 0.66, jdiaz: 0.48, apatel: 0.57,
-  erossi: 0.54, dkim: 0.44, lbennett: 0.61,
+  erossi: 0.54, dkim: 0.44, mbennett: 0.61,
 };
 
 // The demo window: last Monday through the Monday of the following week.
@@ -982,9 +982,17 @@ async function seed(placed) {
       );
       const r = await q(
         `INSERT INTO doctors
-           (prefix, first_name, last_name, specialty_id, email, phone, bio, room, active, user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9) RETURNING id`,
-        [d.prefix, d.first, d.last, specialtyId[d.specialty], d.email, d.phone, d.bio, d.room, u.rows[0].id]
+           (prefix, first_name, last_name, specialty_id, email, phone, bio, room,
+            photo_url, active, user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10) RETURNING id`,
+        [
+          d.prefix, d.first, d.last, specialtyId[d.specialty], d.email, d.phone,
+          d.bio, d.room,
+          // Named for the directory key, so adding a physician is dropping one
+          // file into client/public/doctors and nothing else.
+          `/doctors/${d.key}.jpg`,
+          u.rows[0].id,
+        ]
       );
       doctorId[d.key] = r.rows[0].id;
       doctorUserId[d.key] = u.rows[0].id;

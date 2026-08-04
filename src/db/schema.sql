@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS doctors (
     phone        TEXT,           -- public office line
     bio          TEXT,
     room         TEXT,
+    -- Path to the physician's directory portrait, served from the front end's
+    -- public assets. A path rather than a blob: these are small static files
+    -- that belong on the CDN edge, and pulling them through the database on
+    -- every directory render would be the slowest possible way to draw a face.
+    -- Nullable — a physician without a photo falls back to their initials.
+    photo_url    TEXT,
     active       BOOLEAN NOT NULL DEFAULT true,   -- accepting appointments
     -- Login for the physician's own portal. Nullable: the directory entry can
     -- exist before an admin creates the account.

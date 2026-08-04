@@ -96,6 +96,8 @@ export interface Doctor {
   phone: string | null;
   bio: string | null;
   room: string | null;
+  /** Directory portrait, served from the front end's public assets. */
+  photo_url: string | null;
   locations: DoctorLocation[];
   /** Admin directory extras. */
   active?: boolean;

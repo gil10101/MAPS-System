@@ -38,7 +38,7 @@ import {
   type Appointment, type DoctorDetail,
 } from '../../lib/api';
 import {
-  Alert, Badge, Card, EmptyState, PageHeader, Spinner, StatCard, StatusBadge,
+  Alert, Avatar, Badge, Card, EmptyState, PageHeader, Spinner, StatCard, StatusBadge,
   StatusBarChart, Table, Tabs, Td, Th, TruncatedText, type TabItem,
 } from '../../components/ui';
 
@@ -190,7 +190,12 @@ export default function PhysicianDetail() {
     <>
       <PageHeader
         back={BACK}
-        title={doctor.full_name}
+        title={
+          <span className="flex items-center gap-3">
+            <Avatar name={doctor.full_name} src={doctor.photo_url} />
+            {doctor.full_name}
+          </span>
+        }
         subtitle={[doctor.specialty_name || 'Unassigned', doctor.room && `Room ${doctor.room}`]
           .filter(Boolean)
           .join(' · ')}
