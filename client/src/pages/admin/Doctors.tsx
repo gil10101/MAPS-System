@@ -15,7 +15,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { KeyRound, MapPin, Plus, Stethoscope } from 'lucide-react';
 import {
-  adminCreateDoctor, adminCreateDoctorAccount, adminDeactivateDoctor,
+  adminCreateDoctor,
+  adminCreateSpecialty, adminCreateDoctorAccount, adminDeactivateDoctor,
   adminListDoctors, adminListSpecialties, adminUpdateDoctor, listDoctors,
   type Doctor, type DoctorLocation, type Specialty,
 } from '../../lib/api';
@@ -26,6 +27,9 @@ import {
 import { useToast } from '../../components/Toast';
 
 /** 'Dr.' is the overwhelming default; the field exists for the exceptions. */
+/** Select value that opens the inline create form rather than picking a row. */
+const NEW_SPECIALTY = '__new__';
+
 const EMPTY_FORM = {
   prefix: 'Dr.',
   first_name: '',
@@ -50,6 +54,10 @@ function byLastName(a: Doctor, b: Doctor): number {
 export default function AdminDoctors() {
   const toast = useToast();
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  /** Non-null while the inline "add a specialty" form is open. */
+  const [newSpecialty, setNewSpecialty] = useState<{ name: string; description: string } | null>(null);
+  const [specialtyError, setSpecialtyError] = useState('');
+  const [specialtyBusy, setSpecialtyBusy] = useState(false);
   const [doctors, setDoctors] = useState<Doctor[] | null>(null);
   /** Clinic sites per physician id — see `load()` for where they come from. */
   const [sites, setSites] = useState<Map<number, DoctorLocation[]>>(new Map());
@@ -177,6 +185,39 @@ export default function AdminDoctors() {
       load();
     } catch (err) {
       toast((err as Error).message, 'error');
+    }
+  }
+
+  /**
+   * Create the specialty and select it, without disturbing the physician form
+   * underneath — the admin came here to add a provider, not to manage a lookup
+   * table, and should land back where they left off.
+   */
+  async function saveSpecialty() {
+    if (!newSpecialty) return;
+    const name = newSpecialty.name.trim();
+    if (!name) {
+      setSpecialtyError('A name is required.');
+      return;
+    }
+    setSpecialtyBusy(true);
+    setSpecialtyError('');
+    try {
+      const { specialty } = await adminCreateSpecialty(
+        name,
+        newSpecialty.description.trim() || undefined
+      );
+      setSpecialties((list) =>
+        [...list, specialty].sort((a, b) => a.name.localeCompare(b.name))
+      );
+      set('specialty_id', String(specialty.id));
+      setNewSpecialty(null);
+      toast(`${specialty.name} added.`, 'success');
+    } catch (err) {
+      // A duplicate name comes back as a 409 and is the likely failure here.
+      setSpecialtyError((err as Error).message);
+    } finally {
+      setSpecialtyBusy(false);
     }
   }
 
@@ -386,10 +427,23 @@ export default function AdminDoctors() {
 
         <div className="grid gap-x-4 sm:grid-cols-2">
           <Field label="Specialty" htmlFor="d-specialty">
+            {/*
+              A specialty the practice has not recorded yet is a normal thing to
+              hit while onboarding a provider. Sending the admin away to the
+              Specialties page to create one would lose everything typed into
+              this form, so the option is created from here instead.
+            */}
             <Select
               id="d-specialty"
               value={form.specialty_id}
-              onChange={(e) => set('specialty_id', e.target.value)}
+              onChange={(e) => {
+                if (e.target.value === NEW_SPECIALTY) {
+                  setNewSpecialty({ name: '', description: '' });
+                  setSpecialtyError('');
+                  return;
+                }
+                set('specialty_id', e.target.value);
+              }}
             >
               <option value="">Unassigned</option>
               {specialties.map((s) => (
@@ -397,6 +451,7 @@ export default function AdminDoctors() {
                   {s.name}
                 </option>
               ))}
+              <option value={NEW_SPECIALTY}>+ Add a new specialty…</option>
             </Select>
           </Field>
           <Field label="Room" htmlFor="d-room" hint="Where patients are seen on site.">
@@ -502,6 +557,47 @@ export default function AdminDoctors() {
             autoComplete="off"
             value={loginPassword}
             onChange={(e) => setLoginPassword(e.target.value)}
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={!!newSpecialty}
+        title="Add a specialty"
+        onClose={() => setNewSpecialty(null)}
+        footer={
+          <>
+            <Button onClick={() => setNewSpecialty(null)}>Go back</Button>
+            <Button variant="primary" loading={specialtyBusy} onClick={saveSpecialty}>
+              Add specialty
+            </Button>
+          </>
+        }
+      >
+        {specialtyError && <Alert tone="error">{specialtyError}</Alert>}
+        <p className="mb-3 text-sm text-slate-600">
+          This is added to the clinic's specialty list and selected for the physician
+          you are editing.
+        </p>
+        <Field label="Name" htmlFor="new-specialty-name" required>
+          <Input
+            id="new-specialty-name"
+            value={newSpecialty?.name ?? ''}
+            placeholder="e.g. Endocrinology"
+            onChange={(e) =>
+              setNewSpecialty((s) => (s ? { ...s, name: e.target.value } : s))
+            }
+          />
+        </Field>
+        <Field label="Description" htmlFor="new-specialty-desc">
+          <Textarea
+            id="new-specialty-desc"
+            rows={2}
+            value={newSpecialty?.description ?? ''}
+            placeholder="What this specialty covers."
+            onChange={(e) =>
+              setNewSpecialty((s) => (s ? { ...s, description: e.target.value } : s))
+            }
           />
         </Field>
       </Modal>
