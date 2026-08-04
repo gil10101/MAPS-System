@@ -57,6 +57,14 @@ const STATUS_OPTIONS: ApptStatus[] = [
 const PAGE_SIZE = 25;
 
 /**
+ * How many requests the approval card shows before handing off to the table.
+ *
+ * A screenful. The card exists to say "this needs you now"; past that it stops
+ * being a prompt and becomes a second, worse copy of the table below it.
+ */
+const QUEUE_PREVIEW = 6;
+
+/**
  * How much free text a cell shows before it becomes a link to the whole thing.
  * Short enough that every row is one line tall whatever the patient wrote —
  * a paragraph in one cell is what drags the whole row six lines deep and pushes
@@ -440,7 +448,7 @@ export default function AdminAppointments() {
             </p>
           ) : (
             <ul className="divide-y divide-amber-200/70">
-              {awaiting.map((a) => (
+              {awaiting.slice(0, QUEUE_PREVIEW).map((a) => (
                 <li
                   key={a.id}
                   className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
@@ -464,6 +472,23 @@ export default function AdminAppointments() {
                   {rowActions(a)}
                 </li>
               ))}
+              {/* The queue is a work list, not the whole book. Past a screenful
+                  it stops being scannable, so the rest are handed to the table
+                  below — which filters, sorts and pages — rather than turned
+                  into an endless card. */}
+              {awaiting.length > QUEUE_PREVIEW && (
+                <li className="px-4 py-3 text-sm text-slate-600">
+                  {awaiting.length - QUEUE_PREVIEW} more{' '}
+                  {awaiting.length - QUEUE_PREVIEW === 1 ? 'request is' : 'requests are'} waiting.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setFilter('status', 'pending')}
+                    className="font-semibold text-accent-600 underline-offset-2 hover:underline"
+                  >
+                    Show them all below
+                  </button>
+                </li>
+              )}
             </ul>
           )}
         </Card>

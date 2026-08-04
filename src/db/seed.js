@@ -457,6 +457,43 @@ const APPOINTMENTS = [
     reason: 'Diabetes review', status: 'confirmed',
   },
 
+  // --- Later in the week and into the next one -----------------------------
+  // The named patients need something to look at past Wednesday: a calendar
+  // whose bookings stop mid-week reads as a clinic that closed, and paging
+  // forward has to land on more than an empty grid.
+  {
+    patient: 'john', doctor: 'skim', week: 0, day: THU, time: '10:00',
+    reason: 'Blood pressure recheck', status: 'confirmed',
+  },
+  {
+    patient: 'jordan', doctor: 'jdiaz', week: 0, day: THU, time: '14:00',
+    reason: 'Mole check', status: 'pending',
+  },
+  {
+    patient: 'marcus', doctor: 'erossi', week: 0, day: FRI, time: '09:30',
+    reason: 'Shoulder physiotherapy review', status: 'confirmed',
+  },
+  {
+    patient: 'anita', doctor: 'rosei', week: 0, day: FRI, time: '13:00',
+    reason: 'Cholesterol follow-up', status: 'pending',
+  },
+  {
+    patient: 'lucia', doctor: 'jdiaz', week: 0, day: FRI, time: '15:00',
+    reason: 'Eczema review', status: 'confirmed',
+  },
+  {
+    patient: 'john', doctor: 'lbennett', week: 1, day: MON, time: '09:00',
+    reason: 'Annual physical', status: 'pending',
+  },
+  {
+    patient: 'kevin', doctor: 'apatel', week: 1, day: MON, time: '11:00',
+    reason: 'Asthma review', status: 'confirmed',
+  },
+  {
+    patient: 'marcus', doctor: 'dkim', week: 1, day: MON, time: '14:30',
+    reason: 'Neurology consultation', status: 'pending',
+  },
+
   // --- Upcoming: cancelled. Keeps the Cancellation report current ----------
   {
     // The row 'flu-moved' above replaced: cancelled by the patient with the
@@ -684,13 +721,18 @@ const FILL_TARGET = {
   erossi: 0.54, dkim: 0.44, lbennett: 0.61,
 };
 
-// The demo window: last Monday through the Wednesday of the current week.
-// Week -1 is wholly in the past; week 0 stops at Wednesday so the book ends on
-// the evening of the demonstration date rather than trailing off into a future
-// nobody will look at.
+// The demo window: last Monday through the Monday of the following week.
+//
+// Week -1 is wholly in the past, so it carries the completed visits, the
+// no-shows and the cancellations the reports are read against. Week 0 spans the
+// demonstration itself. The single day in week +1 is what makes the calendar
+// views worth opening — a month grid whose appointments all stop on Friday
+// looks like the clinic closed, and paging to next week has to land on
+// something.
 const FILL_WINDOW = [
   { week: -1, days: [MON, TUE, WED, THU, FRI] },
-  { week: 0, days: [MON, TUE, WED] },
+  { week: 0, days: [MON, TUE, WED, THU, FRI] },
+  { week: 1, days: [MON] },
 ];
 
 // Dr. Rossi is away on the Wednesday. Declared here as well as inserted below
