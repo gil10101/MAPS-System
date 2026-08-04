@@ -1,8 +1,59 @@
+/**
+ * Patient home.
+ *
+ * The order of this page is the design. A visit the clinic has disrupted is the
+ * only thing here the patient *must* act on, so it sits above everything else.
+ * Their scheduled appointments come next — that is what someone opens this app
+ * to see. The counts are context, so they come last: a number can wait, a
+ * cancelled Tuesday cannot.
+ */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Plus } from 'lucide-react';
-import { api, formatDate, formatTime, getUser, initials, type Appointment } from '../../lib/api';
-import { ConfirmBadge, Empty, Spinner } from '../../components/ui';
+import {
+  AlertTriangle, CalendarCheck, CalendarClock, CalendarPlus, Hourglass, MapPin,
+} from 'lucide-react';
+import {
+  formatDate, formatTime, getUser, isOpen, listMyAppointments, todayStr,
+  type Appointment,
+} from '../../lib/api';
+import {
+  Alert, Avatar, Card, EmptyState, PageHeader, RescheduleBadge, Spinner,
+  StatCard, StatusBadge, buttonClasses,
+} from '../../components/ui';
+
+/** Chronological, since both the panel and the callout read as an agenda. */
+function byWhen(a: Appointment, b: Appointment): number {
+  return (a.appt_date + a.appt_time).localeCompare(b.appt_date + b.appt_time);
+}
+
+/** One row of the agenda: who, when, and — because the practice has more than
+    one building — where. */
+function VisitRow({ appointment }: { appointment: Appointment }) {
+  const a = appointment;
+  return (
+    <li className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-3 first:pt-0 last:border-b-0 last:pb-0">
+      <Avatar name={a.doctor_name} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-semibold text-slate-900">{a.doctor_name}</p>
+        <p className="truncate text-sm text-slate-500">{a.specialty_name || 'General practice'}</p>
+        <p className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+          <MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+          <span className="truncate">{a.location_name || 'Site confirmed on approval'}</span>
+        </p>
+      </div>
+      <div className="ml-auto text-right">
+        <p className="whitespace-nowrap text-sm font-semibold text-slate-900">
+          {formatDate(a.appt_date)}
+        </p>
+        <p className="whitespace-nowrap text-sm text-slate-500">{formatTime(a.appt_time)}</p>
+        <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+          <StatusBadge status={a.status} variant="patient" />
+          {a.reschedule_required && <RescheduleBadge />}
+        </div>
+      </div>
+    </li>
+  );
+}
 
 export default function Dashboard() {
   const user = getUser();
@@ -10,84 +61,133 @@ export default function Dashboard() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api<{ appointments: Appointment[] }>('/appointments')
+    listMyAppointments()
       .then((d) => setAppointments(d.appointments))
       .catch((err) => setError((err as Error).message));
   }, []);
 
-  const upcoming = (appointments || [])
-    .filter((a) => a.status === 'booked')
-    .sort((a, b) => (a.appt_date + a.appt_time).localeCompare(b.appt_date + b.appt_time));
-  const completed = (appointments || []).filter((a) => a.status === 'completed');
+  const all = appointments || [];
+  const today = todayStr();
+
+  // "Upcoming" is every live booking still ahead of the patient, approved or
+  // not: a request the clinic has yet to accept is still a plan they have made.
+  const upcoming = all.filter((a) => isOpen(a.status) && a.appt_date >= today).sort(byWhen);
+  const pending = all.filter((a) => a.status === 'pending');
+  const completed = all.filter((a) => a.status === 'completed');
+  const disrupted = upcoming.filter((a) => a.reschedule_required);
 
   return (
-    <div className="container stack">
-      <div className="row between">
-        <div>
-          <h1 id="greeting">Welcome, {user?.full_name.split(' ')[0]}</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            Here's an overview of your care.
+    <>
+      {/* Above the page title deliberately: this is the one thing that cannot
+          wait for the patient to finish reading their agenda. */}
+      {disrupted.length > 0 && (
+        <Alert
+          tone="warning"
+          icon={AlertTriangle}
+          title="Your clinic changed availability — this visit needs a new time"
+          className="mb-6 ring-1 ring-amber-200"
+        >
+          <p className="mt-0.5">
+            {disrupted.length === 1
+              ? 'Your appointment below can no longer go ahead as booked. Pick a new time and the clinic will confirm it.'
+              : `${disrupted.length} of your appointments can no longer go ahead as booked. Pick new times and the clinic will confirm them.`}
           </p>
-        </div>
-        <Link to="/app/doctors" className="btn">
-          <Plus className="lucide in-btn" /> Book appointment
-        </Link>
-      </div>
+          <ul className="mt-3 space-y-2">
+            {disrupted.map((a) => (
+              <li
+                key={a.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/60 px-3 py-2"
+              >
+                <span className="min-w-0">
+                  <span className="font-semibold">{a.doctor_name}</span>
+                  <span className="block text-xs">
+                    {formatDate(a.appt_date)} at {formatTime(a.appt_time)}
+                    {a.location_name ? ` · ${a.location_name}` : ''}
+                  </span>
+                </span>
+                {/* Deep-links straight into the reschedule flow on My
+                    Appointments, so the callout is one click from being done. */}
+                <Link
+                  to={`/app/appointments?reschedule=${a.id}`}
+                  className={buttonClasses('primary', 'sm')}
+                >
+                  Reschedule
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Alert>
+      )}
 
-      <div className="grid cols-3" id="stats">
-        <div className="card stat">
-          <div className="value teal" id="stat-total">{appointments ? upcoming.length : '–'}</div>
-          <div className="label">Upcoming</div>
-        </div>
-        <div className="card stat">
-          <div className="value">{appointments ? completed.length : '–'}</div>
-          <div className="label">Completed visits</div>
-        </div>
-        <div className="card stat">
-          <div className="value">{appointments ? appointments.length : '–'}</div>
-          <div className="label">Total appointments</div>
-        </div>
-      </div>
+      <PageHeader
+        title={`Welcome, ${user?.first_name || 'there'}`}
+        subtitle="Here's what's coming up in your care."
+        actions={
+          <Link to="/app/doctors" className={buttonClasses('primary')}>
+            <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+            Book appointment
+          </Link>
+        }
+      />
 
-      <div className="card">
-        <div className="card-title">
-          <h2>Upcoming appointments</h2>
-          <Link to="/app/appointments" className="btn ghost sm">
+      {error && (
+        <Alert tone="error" icon={AlertTriangle} className="mb-6">
+          {error}
+        </Alert>
+      )}
+
+      <Card
+        title="Upcoming appointments"
+        actions={
+          <Link to="/app/appointments" className={buttonClasses('ghost', 'sm')}>
             View all
           </Link>
-        </div>
-        {error && <div className="alert error">{error}</div>}
+        }
+        className="mb-6"
+      >
         {!appointments && !error && <Spinner />}
         {appointments && upcoming.length === 0 && (
-          <Empty icon={Calendar}>
-            <p>No upcoming appointments.</p>
-            <Link to="/app/doctors" className="btn">
-              Find a doctor
-            </Link>
-          </Empty>
+          <EmptyState
+            icon={CalendarClock}
+            title="No upcoming appointments"
+            action={
+              <Link to="/app/doctors" className={buttonClasses('primary')}>
+                Find a doctor
+              </Link>
+            }
+          >
+            Browse the physician directory and request a time that works for you.
+          </EmptyState>
         )}
-        {upcoming.map((a) => (
-          <div key={a.id} className="appt-row">
-            <div className="who">
-              <div className="avatar">{initials(a.doctor_name)}</div>
-              <div style={{ minWidth: 0 }}>
-                <strong>{a.doctor_name}</strong>
-                <div className="muted small">
-                  {a.specialty_name || ''}
-                  {a.reason ? ` · ${a.reason}` : ''}
-                </div>
-              </div>
-            </div>
-            <div className="when">
-              <div>{formatDate(a.appt_date)}</div>
-              <div className="muted small">{formatTime(a.appt_time)}</div>
-              <div className="badge-stack" style={{ marginTop: 'var(--s1)' }}>
-                <ConfirmBadge status={a.status} confirmation={a.confirmation_status} />
-              </div>
-            </div>
-          </div>
-        ))}
+        {upcoming.length > 0 && (
+          <ul>
+            {upcoming.map((a) => (
+              <VisitRow key={a.id} appointment={a} />
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          label="Upcoming"
+          value={appointments ? upcoming.length : '–'}
+          icon={CalendarClock}
+          accent
+          hint="Confirmed and awaiting approval"
+        />
+        <StatCard
+          label="Pending approval"
+          value={appointments ? pending.length : '–'}
+          icon={Hourglass}
+          hint="The clinic is reviewing these"
+        />
+        <StatCard
+          label="Completed visits"
+          value={appointments ? completed.length : '–'}
+          icon={CalendarCheck}
+        />
       </div>
-    </div>
+    </>
   );
 }

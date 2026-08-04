@@ -1,7 +1,7 @@
 /**
- * Server entry point for the MAPS (Medical Appointment and Patient Scheduling)
- * system. Loads environment config, initializes the database schema, and
- * starts the HTTP server.
+ * Server entry point for MediSync (Medical Appointment and Patient Scheduling).
+ * Loads environment config, initializes the database schema, and starts the
+ * HTTP server.
  */
 'use strict';
 
@@ -15,13 +15,13 @@ const PORT = process.env.PORT || 3000;
 db.init()
   .then(() => {
     app.listen(PORT, () => {
-      console.log('==================================================');
-      console.log('  MAPS - Medical Appointment & Patient Scheduling');
-      console.log('==================================================');
+      console.log('======================================================');
+      console.log('  MediSync - Medical Appointment & Patient Scheduling');
+      console.log('======================================================');
       console.log(`  Server running:  http://localhost:${PORT}`);
       console.log(`  Environment:     ${process.env.NODE_ENV || 'development'}`);
       console.log('  Press Ctrl+C to stop.');
-      console.log('==================================================');
+      console.log('======================================================');
     });
   })
   .catch((err) => {

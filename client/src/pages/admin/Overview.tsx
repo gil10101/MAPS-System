@@ -1,118 +1,159 @@
+/**
+ * Admin Overview — the clinic dashboard.
+ *
+ * The tiles answer "is the book healthy?"; one of them also answers "and what
+ * do I have to do about it". Since a booking now arrives as a *request* that
+ * staff approve (A1), the count of pending requests is not a statistic — it is
+ * this admin's inbox, so the tile is a link into the appointment list already
+ * filtered to that queue.
+ *
+ * The two charts are hand-drawn divs. A bar whose width is a percentage of a
+ * maximum is something CSS does correctly at every viewport width on its own,
+ * and two stacked bar lists do not earn a charting dependency.
+ */
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  api, type Summary, type SpecialtyVolume, type Utilization,
+  Calendar, CalendarX, ClipboardCheck, Stethoscope, UserX, Users,
+} from 'lucide-react';
+import {
+  adminPhysicianUtilization, adminSummary, adminVolumeBySpecialty,
+  STAFF_STATUS_LABEL,
+  type ApptStatus, type PhysicianUtilization, type SpecialtyVolume, type Summary,
 } from '../../lib/api';
-import { Spinner } from '../../components/ui';
-import { useToast } from '../../components/Toast';
+import {
+  Alert, Card, EmptyState, PageHeader, Spinner, StatCard, Table, Td, Th,
+} from '../../components/ui';
 
-function Bar({ label, value, max }: { label: string; value: number; max: number }) {
-  const pct = max ? Math.round((value / max) * 100) : 0;
+/** Lifecycle order, so the status chart reads left-to-right as time does. */
+const STATUS_ORDER: ApptStatus[] = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
+
+interface BarProps {
+  label: string;
+  value: number;
+  max: number;
+}
+
+/**
+ * One labelled bar. The fill width is the only inline style in the file: it is
+ * a runtime ratio, which a utility class cannot express without generating a
+ * class per percentage point. The bar itself is decorative — the figure it
+ * encodes is already sitting next to it as text — so screen readers skip it.
+ */
+function Bar({ label, value, max }: BarProps) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div className="row between" style={{ marginBottom: 4 }}>
-        <span className="small">{label}</span>
-        <strong className="small">{value}</strong>
+    <div className="mb-3 last:mb-0">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <span className="text-sm text-slate-600">{label}</span>
+        <span className="text-sm font-bold tabular-nums text-slate-900">{value}</span>
       </div>
-      <div style={{ background: 'var(--line)', borderRadius: 999, height: 8, overflow: 'hidden' }}>
-        <div
-          style={{ width: `${pct}%`, height: '100%', background: 'var(--brand)', borderRadius: 999 }}
-        />
+      <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className="h-full rounded-full bg-accent-600" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
 }
 
 export default function Overview() {
-  const toast = useToast();
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [utilization, setUtilization] = useState<Utilization[]>([]);
+  const [physicians, setPhysicians] = useState<PhysicianUtilization[]>([]);
   const [volume, setVolume] = useState<SpecialtyVolume[]>([]);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      api<{ summary: Summary }>('/admin/reports/summary'),
-      api<{ utilization: Utilization[] }>('/admin/reports/physician-utilization'),
-      api<{ volume: SpecialtyVolume[] }>('/admin/reports/volume-by-specialty'),
-    ])
+    Promise.all([adminSummary(), adminPhysicianUtilization(), adminVolumeBySpecialty()])
       .then(([s, u, v]) => {
-        setSummary(s.summary);
-        setUtilization(u.utilization);
-        setVolume(v.volume);
+        setSummary(s);
+        setPhysicians(u.doctors);
+        setVolume(v.specialties);
+        setError('');
       })
-      .catch((err) => toast((err as Error).message, 'error'));
-  }, [toast]);
+      .catch((err) => setError((err as Error).message));
+  }, []);
 
-  const a = summary?.appointments;
-  const statusItems: Array<[string, number]> = a
-    ? [
-        ['Booked', a.booked],
-        ['Completed', a.completed],
-        ['Cancelled', a.cancelled],
-        ["Didn't attend", a.no_show],
-      ]
+  const counts = summary?.appointments;
+  const statusBars = counts
+    ? STATUS_ORDER.map((status) => ({ label: STAFF_STATUS_LABEL[status], value: counts[status] }))
     : [];
-  const statusMax = Math.max(1, ...statusItems.map(([, v]) => v));
+  const statusMax = Math.max(1, ...statusBars.map((b) => b.value));
   const volumeMax = Math.max(1, ...volume.map((v) => v.total_appointments));
 
+  /** Tiles render a dash rather than a zero until the numbers actually land. */
+  const dash = '—';
+
   return (
-    <div className="container stack">
-      <div>
-        <h1>Clinic overview</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Operational metrics across all patients and physicians.
-        </p>
+    <div>
+      <PageHeader
+        title="Clinic overview"
+        subtitle="How the book is running, across every site, physician and patient."
+      />
+
+      {error && (
+        <Alert tone="error" className="mb-6">
+          {error}
+        </Alert>
+      )}
+
+      <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Total appointments"
+          value={summary ? summary.appointments.total : dash}
+          icon={Calendar}
+        />
+        {/* No-show rate before cancellation rate: a cancelled slot came back and
+            could be resold, a missed one was simply burned. */}
+        <StatCard
+          label="No-show rate"
+          value={summary ? `${summary.no_show_rate}%` : dash}
+          icon={UserX}
+          hint="Of appointments that came due"
+        />
+        <StatCard
+          label="Cancellation rate"
+          value={summary ? `${summary.cancellation_rate}%` : dash}
+          icon={CalendarX}
+        />
+        <Link
+          to="/admin/appointments?status=pending"
+          className="block rounded-xl transition hover:ring-2 hover:ring-accent-600"
+        >
+          <StatCard
+            label="Pending approval"
+            value={summary ? summary.appointments.pending : dash}
+            icon={ClipboardCheck}
+            accent
+            hint="Open the approval queue"
+          />
+        </Link>
       </div>
 
-      <div className="grid cols-4">
-        <div className="card stat">
-          <div className="value teal" id="s-total">{summary ? summary.appointments.total : '–'}</div>
-          <div className="label">Total appointments</div>
-        </div>
-        {/* No-show rate leads: it's the number clinics actually manage to, and
-            the one the old model couldn't express at all. */}
-        <div className="card stat">
-          <div className="value" id="s-noshow">
-            {summary ? `${summary.no_show_rate}%` : '–'}
-          </div>
-          <div className="label">No-show rate</div>
-        </div>
-        <div className="card stat">
-          <div className="value" id="s-cancel">
-            {summary ? `${summary.cancellation_rate}%` : '–'}
-          </div>
-          <div className="label">Cancellation rate</div>
-        </div>
-        <div className="card stat">
-          <div className="value" id="s-unconfirmed">
-            {summary ? summary.appointments.unconfirmed : '–'}
-          </div>
-          <div className="label">Awaiting patient reply</div>
-        </div>
+      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <StatCard
+          label="Registered patients"
+          value={summary ? summary.total_patients : dash}
+          icon={Users}
+        />
+        <StatCard
+          label="Active physicians"
+          value={summary ? summary.active_doctors : dash}
+          icon={Stethoscope}
+        />
       </div>
 
-      <div className="grid cols-2">
-        <div className="card stat">
-          <div className="value">{summary ? summary.total_patients : '–'}</div>
-          <div className="label">Registered patients</div>
-        </div>
-        <div className="card stat">
-          <div className="value">{summary ? summary.active_doctors : '–'}</div>
-          <div className="label">Active physicians</div>
-        </div>
-      </div>
-
-      <div className="grid cols-2">
-        <div className="card">
-          <h3>Appointments by status</h3>
-          {!summary && <Spinner />}
-          {statusItems.map(([label, value]) => (
-            <Bar key={label} label={label} value={value} max={statusMax} />
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <Card title="Appointments by status">
+          {!summary && !error && <Spinner />}
+          {statusBars.map((b) => (
+            <Bar key={b.label} label={b.label} value={b.value} max={statusMax} />
           ))}
-        </div>
-        <div className="card">
-          <h3>Volume by specialty</h3>
-          {!summary && <Spinner />}
-          {summary && volume.length === 0 && <p className="muted small">No data yet.</p>}
+        </Card>
+
+        <Card title="Volume by specialty">
+          {!summary && !error && <Spinner />}
+          {summary && volume.length === 0 && (
+            <p className="text-sm text-slate-500">No appointments have been booked yet.</p>
+          )}
           {volume.map((v) => (
             <Bar
               key={v.specialty_name}
@@ -121,47 +162,45 @@ export default function Overview() {
               max={volumeMax}
             />
           ))}
-        </div>
+        </Card>
       </div>
 
-      <div className="card table-stack">
-        <div className="card-title">
-          <h3>Physician utilization</h3>
-        </div>
-        {!summary && <Spinner />}
-        {utilization.length > 0 && (
-          <div className="table-wrap" id="util">
-            <table>
-              <thead>
-                <tr>
-                  <th>Physician</th>
-                  <th>Specialty</th>
-                  <th>Total</th>
-                  <th>Upcoming</th>
-                  <th>Completed</th>
-                  <th>Cancelled</th>
-                  <th>No-shows</th>
-                </tr>
-              </thead>
-              <tbody>
-                {utilization.map((r) => (
-                  <tr key={r.id}>
-                    <td data-label="Physician">
-                      <strong>{r.full_name}</strong>
-                    </td>
-                    <td data-label="Specialty" className="muted">{r.specialty_name || '—'}</td>
-                    <td data-label="Total">{r.total_appointments}</td>
-                    <td data-label="Upcoming">{r.upcoming || 0}</td>
-                    <td data-label="Completed">{r.completed || 0}</td>
-                    <td data-label="Cancelled">{r.cancelled || 0}</td>
-                    <td data-label="No-shows">{r.no_show || 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <Card title="Physician utilization">
+        {!summary && !error && <Spinner />}
+        {summary && physicians.length === 0 && (
+          <EmptyState icon={Stethoscope} title="No active physicians">
+            Add a physician under Setup to start taking bookings.
+          </EmptyState>
         )}
-      </div>
+        {physicians.length > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Physician</Th>
+                <Th>Specialty</Th>
+                <Th align="right">Total</Th>
+                <Th align="right">Upcoming</Th>
+                <Th align="right">Completed</Th>
+                <Th align="right">Cancelled</Th>
+                <Th align="right">Didn't attend</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {physicians.map((p) => (
+                <tr key={p.id}>
+                  <Td className="font-semibold text-slate-900">{p.full_name}</Td>
+                  <Td className="text-slate-500">{p.specialty_name || '—'}</Td>
+                  <Td align="right" className="tabular-nums">{p.total_appointments}</Td>
+                  <Td align="right" className="tabular-nums">{p.upcoming}</Td>
+                  <Td align="right" className="tabular-nums">{p.completed}</Td>
+                  <Td align="right" className="tabular-nums">{p.cancelled}</Td>
+                  <Td align="right" className="tabular-nums">{p.no_show}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
     </div>
   );
 }

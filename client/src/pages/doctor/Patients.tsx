@@ -1,8 +1,22 @@
-import { useEffect, useState } from 'react';
+/**
+ * Everyone this physician has appointments with.
+ *
+ * The list is small enough to hold in the browser, so the search filters what
+ * has already been fetched rather than round-tripping per keystroke — a clinic
+ * list is scanned, and a spinner between letters would be the slower experience.
+ *
+ * Ordering is by last name. That is how a patient list is read aloud and how
+ * every report in the system sorts people, and it is applied here as well as in
+ * the query so filtering can never leave the rows in fetch order.
+ */
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Users } from 'lucide-react';
-import { api, formatDate, initials, type CarePatient } from '../../lib/api';
-import { Empty, Spinner } from '../../components/ui';
+import { AlertCircle, Search, Users } from 'lucide-react';
+import { formatDate, listDoctorPatients, type CarePatient } from '../../lib/api';
+import {
+  Alert, Avatar, Button, Card, EmptyState, Field, Input, PageHeader, Spinner,
+  Table, Td, Th, buttonClasses,
+} from '../../components/ui';
 
 export default function DoctorPatients() {
   const [patients, setPatients] = useState<CarePatient[] | null>(null);
@@ -10,7 +24,7 @@ export default function DoctorPatients() {
   const [q, setQ] = useState('');
 
   useEffect(() => {
-    api<{ patients: CarePatient[] }>('/doctor/patients')
+    listDoctorPatients()
       .then((d) => setPatients(d.patients))
       .catch((err) => {
         setError((err as Error).message);
@@ -18,87 +32,110 @@ export default function DoctorPatients() {
       });
   }, []);
 
-  const visible = (patients || []).filter(
-    (p) => !q.trim() || p.full_name.toLowerCase().includes(q.trim().toLowerCase())
-  );
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return (patients || [])
+      .filter((p) =>
+        !needle ||
+        [p.last_name, p.first_name, p.full_name, p.email]
+          .some((field) => (field || '').toLowerCase().includes(needle))
+      )
+      .sort(
+        (a, b) =>
+          a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name)
+      );
+  }, [patients, q]);
 
   return (
-    <div className="container stack">
-      <div>
-        <h1>My patients</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Everyone under your care. Open a chart to review history, medications, and results.
-        </p>
-      </div>
+    <>
+      <PageHeader
+        title="My patients"
+        subtitle="Everyone under your care. Open a chart to review visits and medications."
+      />
 
-      <div className="card">
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label htmlFor="pq">Search by name</label>
-          <input
-            className="input"
-            id="pq"
-            placeholder="e.g. Doe"
+      {error && (
+        <Alert tone="error" icon={AlertCircle} className="mb-4">
+          {error}
+        </Alert>
+      )}
+
+      <Card className="mb-4">
+        <Field label="Search by name or email" htmlFor="patient-search" className="mb-0">
+          <Input
+            id="patient-search"
+            type="search"
+            placeholder="e.g. Alvarez"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-        </div>
-      </div>
+        </Field>
+      </Card>
 
-      <div className="card table-stack">
-        {error && <div className="alert error">{error}</div>}
-        {!patients && !error && <Spinner />}
+      <Card className="p-0 sm:p-0">
+        {!patients && !error && <Spinner label="Loading your patients…" />}
+
         {patients && visible.length === 0 && (
-          <Empty icon={Users}>
-            <p>{q ? 'No patients match your search.' : 'No patients under your care yet.'}</p>
-          </Empty>
+          <EmptyState
+            icon={q ? Search : Users}
+            title={q ? 'No patients match that search' : 'No patients yet'}
+            action={q ? <Button onClick={() => setQ('')}>Clear search</Button> : undefined}
+          >
+            {q
+              ? 'Try part of a last name, or clear the search to see everyone.'
+              : 'Patients appear here once they have booked an appointment with you.'}
+          </EmptyState>
         )}
+
         {visible.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Patient</th>
-                  <th>Date of birth</th>
-                  <th>Visits</th>
-                  <th>Last visit</th>
-                  <th>Next visit</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((p) => (
-                  <tr key={p.id}>
-                    <td data-label="Patient">
-                      <div className="row tight" style={{ alignItems: 'center', flexWrap: 'nowrap' }}>
-                        <span className="avatar sm">{initials(p.full_name)}</span>
-                        <span style={{ minWidth: 0 }}>
-                          <strong>{p.full_name}</strong>
-                          <div className="muted small">{p.email}</div>
-                        </span>
+          <Table>
+            <thead>
+              <tr>
+                <Th>Patient</Th>
+                <Th>Date of birth</Th>
+                <Th align="right">Visits</Th>
+                <Th>Last visit</Th>
+                <Th>Next visit</Th>
+                <Th align="right">Chart</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((p) => (
+                <tr key={p.patient_id}>
+                  <Td>
+                    <div className="flex items-center gap-3">
+                      <Avatar name={p.full_name} size="sm" />
+                      <div className="min-w-0">
+                        <div className="font-semibold text-slate-900">{p.full_name}</div>
+                        <div className="truncate text-xs text-slate-500">{p.email}</div>
                       </div>
-                    </td>
-                    <td data-label="Date of birth" className="nowrap">
-                      {p.date_of_birth ? formatDate(p.date_of_birth) : '—'}
-                    </td>
-                    <td data-label="Visits">{p.visit_count}</td>
-                    <td data-label="Last visit" className="nowrap">
-                      {p.last_visit ? formatDate(p.last_visit) : '—'}
-                    </td>
-                    <td data-label="Next visit" className="nowrap">
-                      {p.next_visit ? formatDate(p.next_visit) : '—'}
-                    </td>
-                    <td className="actions">
-                      <Link className="btn secondary sm" to={`/doctor/patients/${p.id}`}>
-                        Open chart
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </Td>
+                  <Td className="whitespace-nowrap text-slate-600">
+                    {p.date_of_birth ? formatDate(p.date_of_birth) : '—'}
+                  </Td>
+                  <Td align="right" className="font-semibold">
+                    {p.visit_count}
+                  </Td>
+                  <Td className="whitespace-nowrap text-slate-600">
+                    {p.last_visit ? formatDate(p.last_visit) : '—'}
+                  </Td>
+                  <Td className="whitespace-nowrap text-slate-600">
+                    {p.next_visit ? formatDate(p.next_visit) : '—'}
+                  </Td>
+                  <Td align="right">
+                    <Link
+                      to={`/doctor/patients/${p.patient_id}`}
+                      className={buttonClasses('secondary', 'sm')}
+                    >
+                      Open chart
+                    </Link>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-      </div>
-    </div>
+      </Card>
+    </>
   );
 }

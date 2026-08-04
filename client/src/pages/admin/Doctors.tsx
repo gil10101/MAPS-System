@@ -1,11 +1,35 @@
+/**
+ * The physician directory, as clinic staff maintain it.
+ *
+ * A name is three fields — prefix, first, last — because that is how the row is
+ * stored and how every list in the product is ordered. `full_name` is a
+ * generated column: it is read for display and never written back, so the form
+ * below has no field for it.
+ *
+ * Where a physician holds clinic is shown but not edited here. It is derived
+ * from their weekly windows, which belong to Schedules — but "we have a
+ * dermatologist" and "she is in Brooklyn on Thursdays" are the same question to
+ * whoever is answering the phone, so the sites ride along in the table.
+ */
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Plus, Stethoscope } from 'lucide-react';
-import { api, type Doctor, type Specialty } from '../../lib/api';
-import { Empty, MenuItem, Modal, RowMenu, Spinner } from '../../components/ui';
+import { Link } from 'react-router-dom';
+import { KeyRound, MapPin, Plus, Stethoscope } from 'lucide-react';
+import {
+  adminCreateDoctor, adminCreateDoctorAccount, adminDeactivateDoctor,
+  adminListDoctors, adminListSpecialties, adminUpdateDoctor, listDoctors,
+  type Doctor, type DoctorLocation, type Specialty,
+} from '../../lib/api';
+import {
+  Alert, Badge, Button, Card, Checkbox, EmptyState, Field, Input, MenuItem,
+  Modal, PageHeader, RowMenu, Select, Spinner, Table, Td, Textarea, Th,
+} from '../../components/ui';
 import { useToast } from '../../components/Toast';
 
+/** 'Dr.' is the overwhelming default; the field exists for the exceptions. */
 const EMPTY_FORM = {
-  full_name: '',
+  prefix: 'Dr.',
+  first_name: '',
+  last_name: '',
   specialty_id: '',
   room: '',
   email: '',
@@ -14,15 +38,26 @@ const EMPTY_FORM = {
   active: true,
 };
 
+/**
+ * Directory order: surname, then forename to break ties. The server already
+ * sorts this way — repeating it here means the table cannot drift out of that
+ * order if the list is ever assembled from more than one response.
+ */
+function byLastName(a: Doctor, b: Doctor): number {
+  return a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name);
+}
+
 export default function AdminDoctors() {
   const toast = useToast();
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [doctors, setDoctors] = useState<Doctor[] | null>(null);
+  /** Clinic sites per physician id — see `load()` for where they come from. */
+  const [sites, setSites] = useState<Map<number, DoctorLocation[]>>(new Map());
   const [error, setError] = useState('');
 
-  // Add/Edit modal
+  // Add / edit modal
   const [open, setOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<Doctor | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [modalError, setModalError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,15 +69,32 @@ export default function AdminDoctors() {
   const [loginError, setLoginError] = useState('');
 
   useEffect(() => {
-    api<{ specialties: Specialty[] }>('/admin/specialties')
+    adminListSpecialties()
       .then((d) => setSpecialties(d.specialties))
-      .catch(() => {});
+      .catch(() => {
+        /* The picker degrades to "Unassigned" rather than blocking the form. */
+      });
   }, []);
 
   const load = useCallback(() => {
-    api<{ doctors: Doctor[] }>('/admin/doctors')
-      .then((d) => setDoctors(d.doctors))
-      .catch((err) => setError((err as Error).message));
+    adminListDoctors()
+      .then((d) => {
+        setDoctors([...d.doctors].sort(byLastName));
+        setError('');
+      })
+      .catch((err) => {
+        setError((err as Error).message);
+        setDoctors([]);
+      });
+
+    // Sites are not a column on `doctors`: they are whatever a physician's
+    // weekly windows point at, and the public directory is the query that
+    // aggregates them. Filling the column from there costs one request instead
+    // of one per row. It is decoration on this page — the table still lists
+    // everyone if it fails, so the failure is swallowed rather than shown.
+    listDoctors()
+      .then((d) => setSites(new Map(d.doctors.map((doc) => [doc.id, doc.locations]))))
+      .catch(() => {});
   }, []);
 
   useEffect(load, [load]);
@@ -51,34 +103,42 @@ export default function AdminDoctors() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  /** The admin payload wins when it carries sites itself; the directory fills in. */
+  function sitesFor(doc: Doctor): DoctorLocation[] {
+    return doc.locations?.length ? doc.locations : sites.get(doc.id) ?? [];
+  }
+
   function openModal(doc?: Doctor) {
     setModalError('');
-    if (doc) {
-      setEditingId(doc.id);
-      setForm({
-        full_name: doc.full_name,
-        specialty_id: doc.specialty_id ? String(doc.specialty_id) : '',
-        room: doc.room || '',
-        email: doc.email || '',
-        phone: doc.phone || '',
-        bio: doc.bio || '',
-        active: !!doc.active,
-      });
-    } else {
-      setEditingId(null);
-      setForm(EMPTY_FORM);
-    }
+    setEditing(doc ?? null);
+    setForm(
+      doc
+        ? {
+            prefix: doc.prefix || 'Dr.',
+            first_name: doc.first_name,
+            last_name: doc.last_name,
+            specialty_id: doc.specialty_id ? String(doc.specialty_id) : '',
+            room: doc.room || '',
+            email: doc.email || '',
+            phone: doc.phone || '',
+            bio: doc.bio || '',
+            active: doc.active !== false,
+          }
+        : EMPTY_FORM
+    );
     setOpen(true);
   }
 
   async function save() {
-    if (!form.full_name.trim()) {
-      setModalError('Name is required.');
+    if (!form.first_name.trim() || !form.last_name.trim()) {
+      setModalError('First and last name are required.');
       return;
     }
-    const body: Record<string, unknown> = {
-      full_name: form.full_name.trim(),
-      specialty_id: form.specialty_id || null,
+    const body = {
+      prefix: form.prefix.trim() || 'Dr.',
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      specialty_id: form.specialty_id ? Number(form.specialty_id) : null,
       room: form.room.trim() || null,
       email: form.email.trim() || null,
       phone: form.phone.trim() || null,
@@ -87,11 +147,12 @@ export default function AdminDoctors() {
     setBusy(true);
     setModalError('');
     try {
-      if (editingId) {
-        body.active = form.active;
-        await api(`/admin/doctors/${editingId}`, { method: 'PUT', body });
+      if (editing) {
+        // `active` is only in the edit form: a physician being added is being
+        // added to take bookings.
+        await adminUpdateDoctor(editing.id, { ...body, active: form.active });
       } else {
-        await api('/admin/doctors', { method: 'POST', body });
+        await adminCreateDoctor(body);
       }
       setOpen(false);
       toast('Physician saved.', 'success');
@@ -103,12 +164,15 @@ export default function AdminDoctors() {
     }
   }
 
-  async function deactivate(id: number) {
-    if (!window.confirm('Deactivate this physician? They will stop accepting new appointments.')) {
-      return;
-    }
+  /** Soft delete: bookings stop, the appointment history the clinic reports on stays. */
+  async function deactivate(doc: Doctor) {
+    const ok = window.confirm(
+      `Deactivate ${doc.full_name}? They stop accepting new appointments. ` +
+        'Bookings already on the books are untouched.'
+    );
+    if (!ok) return;
     try {
-      await api(`/admin/doctors/${id}`, { method: 'DELETE' });
+      await adminDeactivateDoctor(doc.id);
       toast('Physician deactivated.', 'success');
       load();
     } catch (err) {
@@ -128,10 +192,7 @@ export default function AdminDoctors() {
     setBusy(true);
     setLoginError('');
     try {
-      await api(`/admin/doctors/${loginFor.id}/account`, {
-        method: 'POST',
-        body: { email: loginEmail.trim(), password: loginPassword },
-      });
+      await adminCreateDoctorAccount(loginFor.id, loginEmail.trim(), loginPassword);
       toast(`Login created — ${loginFor.full_name} can now sign in.`, 'success');
       setLoginFor(null);
       load();
@@ -143,131 +204,183 @@ export default function AdminDoctors() {
   }
 
   return (
-    <div className="container stack">
-      <div className="row between">
-        <div>
-          <h1>Physicians</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            Add, edit, or deactivate providers.
-          </p>
-        </div>
-        <button className="btn" onClick={() => openModal()}>
-          <Plus className="lucide in-btn" /> Add physician
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Physicians"
+        subtitle="Add, edit, or deactivate providers. Clinic times are set under Schedules."
+        actions={
+          <Button variant="primary" icon={Plus} onClick={() => openModal()}>
+            Add physician
+          </Button>
+        }
+      />
 
-      <div className="card table-stack">
-        {error && <div className="alert error">{error}</div>}
-        {!doctors && !error && <Spinner />}
+      {error && (
+        <Alert tone="error" className="mb-4">
+          {error}
+        </Alert>
+      )}
+
+      <Card className="p-0 sm:p-0">
+        {!doctors && !error && <Spinner label="Loading the directory…" />}
+
         {doctors && doctors.length === 0 && (
-          <Empty icon={Stethoscope}>
-            <p>No physicians yet.</p>
-          </Empty>
+          <EmptyState
+            icon={Stethoscope}
+            title="No physicians yet"
+            action={
+              <Button variant="primary" icon={Plus} onClick={() => openModal()}>
+                Add physician
+              </Button>
+            }
+          >
+            Add the providers this practice books for. Each one needs a weekly schedule before
+            patients can request a time with them.
+          </EmptyState>
         )}
+
         {doctors && doctors.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Specialty</th>
-                  <th>Contact</th>
-                  <th>Room</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {doctors.map((d) => (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Physician</Th>
+                <Th>Specialty</Th>
+                <Th>Clinic sites</Th>
+                <Th>Contact</Th>
+                <Th>Room</Th>
+                <Th>Status</Th>
+                <Th align="right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {doctors.map((d) => {
+                const clinics = sitesFor(d);
+                return (
                   <tr key={d.id}>
-                    <td data-label="Name">
-                      <strong>{d.full_name}</strong>
-                    </td>
-                    <td data-label="Specialty" className="muted">{d.specialty_name || '—'}</td>
-                    <td data-label="Contact" className="muted small">
-                      {d.email || ''}
-                      {d.phone && (
-                        <>
-                          <br />
-                          {d.phone}
-                        </>
+                    <Td className="font-semibold text-slate-900">{d.full_name}</Td>
+                    <Td className="text-slate-500">{d.specialty_name || 'Unassigned'}</Td>
+                    <Td>
+                      {clinics.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {clinics.map((l) => (
+                            <span
+                              key={l.id}
+                              className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600"
+                              title={`${l.name}, ${l.city}`}
+                            >
+                              <MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                              {l.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : d.active === false ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <Link
+                          to="/admin/schedules"
+                          className="whitespace-nowrap text-sm font-semibold text-accent-600 hover:underline"
+                        >
+                          Set clinic times
+                        </Link>
                       )}
-                    </td>
-                    <td data-label="Room">{d.room || '—'}</td>
-                    <td data-label="Status">
-                      <div className="badge-stack">
-                        {d.active ? (
-                          <span className="badge completed">Active</span>
+                    </Td>
+                    <Td className="text-slate-500">
+                      <span className="block truncate">{d.email || '—'}</span>
+                      {d.phone && <span className="block text-xs">{d.phone}</span>}
+                    </Td>
+                    <Td>{d.room || '—'}</Td>
+                    <Td>
+                      <div className="flex flex-col items-start gap-1">
+                        {d.active === false ? (
+                          <Badge tone="red">Inactive</Badge>
                         ) : (
-                          <span className="badge cancelled">Inactive</span>
+                          <Badge tone="green">Active</Badge>
                         )}
                         {d.login_email ? (
-                          <span className="muted small">login: {d.login_email}</span>
+                          <span className="text-xs text-slate-400">{d.login_email}</span>
                         ) : (
-                          <span className="badge warn">no login</span>
+                          <Badge tone="amber">No portal login</Badge>
                         )}
                       </div>
-                    </td>
-                    <td className="actions">
-                      <div className="action-group">
-                        <button className="btn secondary sm" onClick={() => openModal(d)}>
+                    </Td>
+                    <Td align="right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Button size="sm" onClick={() => openModal(d)}>
                           Edit
-                        </button>
-                        {(!d.user_id || d.active) && (
-                          <RowMenu label={`Actions for ${d.full_name}`}>
+                        </Button>
+                        {(!d.user_id || d.active !== false) && (
+                          <RowMenu label={`More actions for ${d.full_name}`}>
                             {!d.user_id && (
-                              <MenuItem onClick={() => openLoginModal(d)}>
+                              <MenuItem icon={KeyRound} onClick={() => openLoginModal(d)}>
                                 Create portal login
                               </MenuItem>
                             )}
-                            {d.active && (
-                              <MenuItem danger onClick={() => deactivate(d.id)}>
+                            {d.active !== false && (
+                              <MenuItem danger onClick={() => deactivate(d)}>
                                 Deactivate
                               </MenuItem>
                             )}
                           </RowMenu>
                         )}
                       </div>
-                    </td>
+                    </Td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </Table>
         )}
-      </div>
+      </Card>
 
       <Modal
         open={open}
-        title={editingId ? 'Edit physician' : 'Add physician'}
+        title={editing ? `Edit ${editing.full_name}` : 'Add physician'}
         onClose={() => setOpen(false)}
         footer={
           <>
-            <button className="btn secondary" onClick={() => setOpen(false)}>
-              Cancel
-            </button>
-            <button className="btn" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save'}
-            </button>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" loading={busy} onClick={save}>
+              Save
+            </Button>
           </>
         }
       >
-        {modalError && <div className="alert error">{modalError}</div>}
-        <div className="field">
-          <label htmlFor="m-name">Full name *</label>
-          <input
-            className="input"
-            id="m-name"
-            placeholder="Dr. Jane Smith"
-            value={form.full_name}
-            onChange={(e) => set('full_name', e.target.value)}
-          />
+        {modalError && (
+          <Alert tone="error" className="mb-4">
+            {modalError}
+          </Alert>
+        )}
+
+        <div className="grid gap-x-4 sm:grid-cols-[7rem_1fr_1fr]">
+          <Field label="Prefix" htmlFor="d-prefix" required>
+            <Input
+              id="d-prefix"
+              value={form.prefix}
+              onChange={(e) => set('prefix', e.target.value)}
+            />
+          </Field>
+          <Field label="First name" htmlFor="d-first" required>
+            <Input
+              id="d-first"
+              autoComplete="off"
+              value={form.first_name}
+              onChange={(e) => set('first_name', e.target.value)}
+            />
+          </Field>
+          <Field label="Last name" htmlFor="d-last" required>
+            <Input
+              id="d-last"
+              autoComplete="off"
+              value={form.last_name}
+              onChange={(e) => set('last_name', e.target.value)}
+            />
+          </Field>
         </div>
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="m-specialty">Specialty</label>
-            <select
-              id="m-specialty"
+
+        <div className="grid gap-x-4 sm:grid-cols-2">
+          <Field label="Specialty" htmlFor="d-specialty">
+            <Select
+              id="d-specialty"
               value={form.specialty_id}
               onChange={(e) => set('specialty_id', e.target.value)}
             >
@@ -277,60 +390,58 @@ export default function AdminDoctors() {
                   {s.name}
                 </option>
               ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="m-room">Room</label>
-            <input
-              className="input"
-              id="m-room"
+            </Select>
+          </Field>
+          <Field label="Room" htmlFor="d-room" hint="Where patients are seen on site.">
+            <Input
+              id="d-room"
               placeholder="A-101"
               value={form.room}
               onChange={(e) => set('room', e.target.value)}
             />
-          </div>
+          </Field>
         </div>
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="m-email">Email</label>
-            <input
-              className="input"
+
+        <div className="grid gap-x-4 sm:grid-cols-2">
+          <Field label="Email" htmlFor="d-email">
+            <Input
+              id="d-email"
               type="email"
-              id="m-email"
               value={form.email}
               onChange={(e) => set('email', e.target.value)}
             />
-          </div>
-          <div className="field">
-            <label htmlFor="m-phone">Phone</label>
-            <input
-              className="input"
-              id="m-phone"
+          </Field>
+          <Field label="Office phone" htmlFor="d-phone">
+            <Input
+              id="d-phone"
+              type="tel"
               value={form.phone}
               onChange={(e) => set('phone', e.target.value)}
             />
-          </div>
+          </Field>
         </div>
-        <div className="field">
-          <label htmlFor="m-bio">Bio</label>
-          <textarea
-            id="m-bio"
+
+        <Field
+          label="Bio"
+          htmlFor="d-bio"
+          hint="Shown to patients in the directory."
+          className={editing ? 'mb-4' : 'mb-0'}
+        >
+          <Textarea
+            id="d-bio"
             placeholder="Short professional bio"
             value={form.bio}
             onChange={(e) => set('bio', e.target.value)}
           />
-        </div>
-        {editingId && (
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>
-              <input
-                type="checkbox"
-                checked={form.active}
-                onChange={(e) => set('active', e.target.checked)}
-              />{' '}
-              Accepting appointments (active)
-            </label>
-          </div>
+        </Field>
+
+        {editing && (
+          <Checkbox
+            label="Accepting appointments"
+            hint="Clearing this keeps their history and removes them from patient search."
+            checked={form.active}
+            onChange={(e) => set('active', e.target.checked)}
+          />
         )}
       </Modal>
 
@@ -338,48 +449,54 @@ export default function AdminDoctors() {
         open={!!loginFor}
         title={`Create login for ${loginFor?.full_name || ''}`}
         onClose={() => setLoginFor(null)}
+        size="sm"
         footer={
           <>
-            <button className="btn secondary" onClick={() => setLoginFor(null)}>
-              Go back
-            </button>
-            <button
-              className="btn"
-              disabled={!loginEmail.trim() || loginPassword.length < 6 || busy}
+            <Button onClick={() => setLoginFor(null)}>Go back</Button>
+            <Button
+              variant="primary"
+              icon={KeyRound}
+              loading={busy}
+              disabled={!loginEmail.trim() || loginPassword.length < 6}
               onClick={createLogin}
             >
-              <KeyRound className="lucide in-btn" />
-              {busy ? 'Creating…' : 'Create login'}
-            </button>
+              Create login
+            </Button>
           </>
         }
       >
-        {loginError && <div className="alert error">{loginError}</div>}
-        <p className="muted small">
-          Gives this physician access to their portal: schedule, patient charts, prescriptions,
+        {loginError && (
+          <Alert tone="error" className="mb-4">
+            {loginError}
+          </Alert>
+        )}
+        <p className="mb-4 text-sm text-slate-600">
+          Gives this physician their own portal: today's schedule, patient charts, prescriptions
           and refill requests. Share the password with them securely and have them change it.
         </p>
-        <div className="field">
-          <label htmlFor="l-email">Login email</label>
-          <input
-            className="input"
-            type="email"
+        <Field label="Login email" htmlFor="l-email" required>
+          <Input
             id="l-email"
+            type="email"
+            autoComplete="off"
             value={loginEmail}
             onChange={(e) => setLoginEmail(e.target.value)}
           />
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label htmlFor="l-password">Temporary password (min 6 characters)</label>
-          <input
-            className="input"
-            type="text"
+        </Field>
+        <Field
+          label="Temporary password"
+          htmlFor="l-password"
+          hint="At least 6 characters."
+          className="mb-0"
+        >
+          <Input
             id="l-password"
+            type="text"
             autoComplete="off"
             value={loginPassword}
             onChange={(e) => setLoginPassword(e.target.value)}
           />
-        </div>
+        </Field>
       </Modal>
     </div>
   );

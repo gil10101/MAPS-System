@@ -1,6 +1,6 @@
 /**
- * Express application setup: middleware, API routes, static SPA serving, and
- * error handling. The HTTP server itself is started in server.js.
+ * MediSync — Express application setup: middleware, API routes, static SPA
+ * serving, and error handling. The HTTP server itself is started in server.js.
  */
 'use strict';
 
@@ -9,10 +9,14 @@ const fs = require('fs');
 const express = require('express');
 
 const authRoutes = require('./routes/auth');
+const locationRoutes = require('./routes/locations');
+const notificationRoutes = require('./routes/notifications');
 const doctorRoutes = require('./routes/doctors');
+const doctorReportRoutes = require('./routes/doctor-reports');
 const doctorPortalRoutes = require('./routes/doctor-portal');
 const appointmentRoutes = require('./routes/appointments');
 const patientRoutes = require('./routes/patients');
+const adminReportRoutes = require('./routes/admin-reports');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -34,12 +38,21 @@ if (process.env.NODE_ENV !== 'test') {
 // Health check (useful for hosting platforms / load balancers).
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
-// API routes
+// API routes.
+//
+// Order matters: the report routers sit under prefixes their portal router
+// already owns, so /api/doctor/reports and /api/admin/reports must be mounted
+// BEFORE /api/doctor and /api/admin. Mounted the other way round, the portal
+// router matches first and answers "not found" for every report.
 app.use('/api/auth', authRoutes);
-app.use('/api/doctors', doctorRoutes);       // public directory (browse/book)
-app.use('/api/doctor', doctorPortalRoutes);  // physician's own portal
+app.use('/api/locations', locationRoutes);           // public site list
+app.use('/api/notifications', notificationRoutes);   // tray, any signed-in role
+app.use('/api/doctors', doctorRoutes);               // public directory (browse/book)
+app.use('/api/doctor/reports', doctorReportRoutes);  // physician's own data only
+app.use('/api/doctor', doctorPortalRoutes);          // physician's own portal
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/patients', patientRoutes);
+app.use('/api/admin/reports', adminReportRoutes);    // clinic-wide reporting
 app.use('/api/admin', adminRoutes);
 
 // Unknown API route -> JSON 404 (before SPA fallthrough).

@@ -1,20 +1,30 @@
+/**
+ * The physician's day view — who is coming, where, and what still needs closing.
+ *
+ * One day at a time rather than a week grid: the question this page answers is
+ * "what is in front of me now", and a day is the unit a clinic session is run
+ * in. The date navigator is kept next to the heading so moving to tomorrow is
+ * one tap and never a page change.
+ *
+ * A visit can only be completed out of `confirmed`. A `pending` row is a
+ * request nobody has approved yet, so it gets a line of explanation instead of
+ * an action the server would refuse — offering a button that always fails is
+ * worse than offering none.
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
-  api, formatDate, formatTime, todayStr, type Appointment,
+  AlertCircle, CalendarClock, ChevronLeft, ChevronRight, Clock,
+} from 'lucide-react';
+import {
+  addDays, completeAppointment, formatDate, formatTime, listDoctorAppointments, todayStr,
+  type Appointment,
 } from '../../lib/api';
-import { Badge, ConfirmBadge, Empty, Modal, Spinner } from '../../components/ui';
+import {
+  Alert, Button, Card, EmptyState, Field, IconButton, Input, Modal, PageHeader,
+  RescheduleBadge, Spinner, StatusBadge, Table, Td, Textarea, Th,
+} from '../../components/ui';
 import { useToast } from '../../components/Toast';
-
-/** Shift 'YYYY-MM-DD' by n days (local time, DST-safe at noon). */
-function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(`${dateStr}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate()
-  ).padStart(2, '0')}`;
-}
 
 export default function DoctorSchedule() {
   const toast = useToast();
@@ -22,15 +32,16 @@ export default function DoctorSchedule() {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [error, setError] = useState('');
 
-  // Complete-visit modal: the clinical note is required, so this can't be a
-  // bare confirm dialog.
+  // The clinical note is required to complete, so this is a form rather than a
+  // confirm dialog.
   const [completing, setCompleting] = useState<Appointment | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     setAppointments(null);
-    api<{ appointments: Appointment[] }>(`/doctor/appointments?date=${date}`)
+    setError('');
+    listDoctorAppointments({ date })
       .then((d) => setAppointments(d.appointments))
       .catch((err) => {
         setError((err as Error).message);
@@ -44,10 +55,7 @@ export default function DoctorSchedule() {
     if (!completing || !note.trim()) return;
     setBusy(true);
     try {
-      await api(`/doctor/appointments/${completing.id}/complete`, {
-        method: 'PATCH',
-        body: { note: note.trim() },
-      });
+      await completeAppointment(completing.id, note.trim());
       toast(`Visit with ${completing.patient_name} completed.`, 'success');
       setCompleting(null);
       setNote('');
@@ -60,102 +68,127 @@ export default function DoctorSchedule() {
   }
 
   const isToday = date === todayStr();
+  const pendingCount = (appointments || []).filter((a) => a.status === 'pending').length;
 
   return (
-    <div className="container stack">
-      <div className="row between">
-        <div>
-          <h1>{isToday ? "Today's schedule" : 'Schedule'}</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            {formatDate(date)} — complete visits with a note as you see patients.
-          </p>
-        </div>
-        <div className="row tight">
-          <button className="btn secondary sm" onClick={() => setDate(shiftDate(date, -1))} aria-label="Previous day">
-            <ChevronLeft className="lucide" />
-          </button>
-          {!isToday && (
-            <button className="btn secondary sm" onClick={() => setDate(todayStr())}>
-              Today
-            </button>
-          )}
-          <input
-            className="input"
-            type="date"
-            style={{ width: 'auto', minHeight: '2.25rem' }}
-            value={date}
-            onChange={(e) => e.target.value && setDate(e.target.value)}
-            aria-label="Schedule date"
-          />
-          <button className="btn secondary sm" onClick={() => setDate(shiftDate(date, 1))} aria-label="Next day">
-            <ChevronRight className="lucide" />
-          </button>
-        </div>
-      </div>
-
-      <div className="card table-stack">
-        {error && <div className="alert error">{error}</div>}
-        {!appointments && !error && <Spinner />}
-        {appointments && appointments.length === 0 && (
-          <Empty icon={CalendarClock}>
-            <p>No appointments on this day.</p>
-          </Empty>
-        )}
-        {appointments && appointments.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Patient</th>
-                  <th>Reason</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {appointments.map((a) => (
-                  <tr key={a.id}>
-                    <td data-label="Time" className="nowrap">
-                      <strong>{formatTime(a.appt_time)}</strong>
-                    </td>
-                    <td data-label="Patient">
-                      <Link to={`/doctor/patients/${a.patient_id}`}>
-                        <strong>{a.patient_name}</strong>
-                      </Link>
-                      <div className="muted small">{a.patient_email}</div>
-                    </td>
-                    <td data-label="Reason" className="muted">{a.reason || '—'}</td>
-                    <td data-label="Status">
-                      <div className="badge-stack">
-                        <Badge status={a.status} />
-                        <ConfirmBadge status={a.status} confirmation={a.confirmation_status} />
-                      </div>
-                    </td>
-                    <td className="actions">
-                      {a.status === 'booked' ? (
-                        <button
-                          className="btn sm"
-                          onClick={() => {
-                            setCompleting(a);
-                            setNote('');
-                          }}
-                        >
-                          Complete visit
-                        </button>
-                      ) : a.status === 'completed' && a.notes ? (
-                        <span className="muted small">Note on file</span>
-                      ) : (
-                        <span className="muted small">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <>
+      <PageHeader
+        title={isToday ? "Today's schedule" : 'Schedule'}
+        subtitle={`${formatDate(date)} — complete each visit with a note as you see the patient.`}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <IconButton
+              icon={ChevronLeft}
+              label="Previous day"
+              size="sm"
+              onClick={() => setDate(addDays(date, -1))}
+            />
+            <Input
+              type="date"
+              className="w-auto min-w-[9.5rem]"
+              value={date}
+              onChange={(e) => e.target.value && setDate(e.target.value)}
+              aria-label="Schedule date"
+            />
+            <IconButton
+              icon={ChevronRight}
+              label="Next day"
+              size="sm"
+              onClick={() => setDate(addDays(date, 1))}
+            />
+            {!isToday && (
+              <Button size="sm" onClick={() => setDate(todayStr())}>
+                Today
+              </Button>
+            )}
           </div>
+        }
+      />
+
+      {error && (
+        <Alert tone="error" icon={AlertCircle} className="mb-4">
+          {error}
+        </Alert>
+      )}
+
+      {pendingCount > 0 && (
+        <Alert tone="warning" icon={Clock} className="mb-4">
+          {pendingCount === 1
+            ? '1 booking on this day is still a request waiting on clinic staff to approve it.'
+            : `${pendingCount} bookings on this day are still requests waiting on clinic staff to approve them.`}
+        </Alert>
+      )}
+
+      <Card className="p-0 sm:p-0">
+        {!appointments && !error && <Spinner label="Loading your day…" />}
+
+        {appointments && appointments.length === 0 && (
+          <EmptyState icon={CalendarClock} title="Nothing booked on this day">
+            Use the date navigator above to look at another day.
+          </EmptyState>
         )}
-      </div>
+
+        {appointments && appointments.length > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Time</Th>
+                <Th>Patient</Th>
+                <Th>Reason</Th>
+                <Th>Location</Th>
+                <Th>Status</Th>
+                <Th align="right">Action</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {appointments.map((a) => (
+                <tr key={a.id}>
+                  <Td className="whitespace-nowrap font-semibold">{formatTime(a.appt_time)}</Td>
+                  <Td>
+                    <Link
+                      to={`/doctor/patients/${a.patient_id}`}
+                      className="font-semibold text-accent-700 hover:underline"
+                    >
+                      {a.patient_name}
+                    </Link>
+                    <div className="text-xs text-slate-500">{a.patient_email}</div>
+                  </Td>
+                  <Td className="text-slate-600">{a.reason || '—'}</Td>
+                  {/* A physician may hold clinic at more than one site in a
+                      week, so the building is part of the row, not a setting. */}
+                  <Td className="whitespace-nowrap text-slate-600">{a.location_name || '—'}</Td>
+                  <Td>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <StatusBadge status={a.status} variant="staff" />
+                      {a.reschedule_required && <RescheduleBadge />}
+                    </div>
+                  </Td>
+                  <Td align="right">
+                    {a.status === 'confirmed' ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          setCompleting(a);
+                          setNote('');
+                        }}
+                      >
+                        Complete visit
+                      </Button>
+                    ) : a.status === 'pending' ? (
+                      <span className="text-xs text-slate-500">Awaiting clinic approval</span>
+                    ) : a.status === 'completed' && a.notes ? (
+                      <span className="text-xs text-slate-500">Note on file</span>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
 
       <Modal
         open={!!completing}
@@ -163,35 +196,44 @@ export default function DoctorSchedule() {
         onClose={() => setCompleting(null)}
         footer={
           <>
-            <button className="btn secondary" onClick={() => setCompleting(null)}>
-              Go back
-            </button>
-            <button className="btn" disabled={!note.trim() || busy} onClick={completeVisit}>
-              {busy ? 'Saving…' : 'Sign & complete'}
-            </button>
+            <Button onClick={() => setCompleting(null)}>Go back</Button>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={!note.trim()}
+              onClick={completeVisit}
+            >
+              Sign &amp; complete
+            </Button>
           </>
         }
       >
         {completing && (
           <>
-            <p className="muted small">
+            <p className="mb-4 text-sm text-slate-600">
               {completing.patient_name} · {formatDate(completing.appt_date)} at{' '}
               {formatTime(completing.appt_time)}
+              {completing.location_name ? ` · ${completing.location_name}` : ''}
               {completing.reason ? ` · ${completing.reason}` : ''}
             </p>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="visit-note">Visit note (required — visible to the patient)</label>
-              <textarea
+            <Field
+              label="Visit note"
+              htmlFor="visit-note"
+              required
+              hint="Kept in the chart for the care team. Patients do not see visit notes."
+              className="mb-0"
+            >
+              <Textarea
                 id="visit-note"
                 rows={6}
                 placeholder="Findings, assessment, plan, and any follow-up instructions."
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
               />
-            </div>
+            </Field>
           </>
         )}
       </Modal>
-    </div>
+    </>
   );
 }

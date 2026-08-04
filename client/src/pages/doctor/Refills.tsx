@@ -1,11 +1,53 @@
+/**
+ * The refill queue — the one approval workflow that genuinely belongs to a
+ * physician rather than to clinic staff.
+ *
+ * The filter defaults to `pending` because that is the work; approved and
+ * denied are kept reachable because a decision made last week is exactly what
+ * a doctor needs when the same patient asks again, and a queue that forgets its
+ * own history forces them to open charts to reconstruct it.
+ *
+ * Approving dispenses one refill (the server increments `refills_used` in the
+ * same transaction). Denying requires a note and prompts the patient to book a
+ * follow-up — a refusal with no route forward is how someone quietly stops
+ * taking their medication.
+ */
 import { useCallback, useEffect, useState } from 'react';
-import { Pill } from 'lucide-react';
-import { api, formatStamp, type RefillRequest } from '../../lib/api';
-import { Empty, Modal, Spinner } from '../../components/ui';
+import { AlertCircle, Pill } from 'lucide-react';
+import {
+  decideRefillRequest, formatStamp, listRefillRequests,
+  type RefillRequest, type RefillStatus,
+} from '../../lib/api';
+import {
+  Alert, Badge, Button, Card, EmptyState, Field, Modal, PageHeader, Spinner,
+  Table, Tabs, Td, Textarea, Th, type TabItem,
+} from '../../components/ui';
 import { useToast } from '../../components/Toast';
+
+const STATUS_TABS: TabItem[] = [
+  { id: 'pending', label: 'Waiting on you' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'denied', label: 'Denied' },
+];
+
+const EMPTY_COPY: Record<RefillStatus, { title: string; body: string }> = {
+  pending: {
+    title: 'No refill requests waiting',
+    body: 'Requests from patients on medications you prescribed land here.',
+  },
+  approved: {
+    title: 'Nothing approved yet',
+    body: 'Refills you authorize are kept here as a record of the decision.',
+  },
+  denied: {
+    title: 'Nothing denied yet',
+    body: 'Requests you turn down are kept here along with the note the patient was sent.',
+  },
+};
 
 export default function DoctorRefills() {
   const toast = useToast();
+  const [status, setStatus] = useState<RefillStatus>('pending');
   const [requests, setRequests] = useState<RefillRequest[] | null>(null);
   const [error, setError] = useState('');
   const [denying, setDenying] = useState<RefillRequest | null>(null);
@@ -14,27 +56,25 @@ export default function DoctorRefills() {
 
   const load = useCallback(() => {
     setRequests(null);
-    api<{ requests: RefillRequest[] }>('/doctor/refill-requests?status=pending')
+    setError('');
+    listRefillRequests(status)
       .then((d) => setRequests(d.requests))
       .catch((err) => {
         setError((err as Error).message);
         setRequests([]);
       });
-  }, []);
+  }, [status]);
 
   useEffect(load, [load]);
 
-  async function decide(r: RefillRequest, status: 'approved' | 'denied', note?: string) {
+  async function decide(r: RefillRequest, decision: 'approved' | 'denied', note?: string) {
     setBusy(true);
     try {
-      await api(`/doctor/refill-requests/${r.id}`, {
-        method: 'PATCH',
-        body: { status, decision_note: note },
-      });
+      await decideRefillRequest(r.id, decision, note);
       toast(
-        status === 'approved'
+        decision === 'approved'
           ? `Refill approved for ${r.patient_name}.`
-          : `Request denied — ${r.patient_name} will see your note.`,
+          : `Request denied — ${r.patient_name} will be prompted to book a follow-up.`,
         'success'
       );
       setDenying(null);
@@ -47,62 +87,85 @@ export default function DoctorRefills() {
     }
   }
 
-  return (
-    <div className="container stack">
-      <div>
-        <h1>Refill requests</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Patients asking to refill medications you prescribed. Approving dispenses one refill.
-        </p>
-      </div>
+  const isQueue = status === 'pending';
 
-      <div className="card table-stack">
-        {error && <div className="alert error">{error}</div>}
-        {!requests && !error && <Spinner />}
+  return (
+    <>
+      <PageHeader
+        title="Refill requests"
+        subtitle="Patients asking to refill medications you prescribed. Approving dispenses one refill."
+      />
+
+      <Tabs
+        tabs={STATUS_TABS}
+        active={status}
+        onChange={(next) => setStatus(next as RefillStatus)}
+      />
+
+      {error && (
+        <Alert tone="error" icon={AlertCircle} className="mb-4">
+          {error}
+        </Alert>
+      )}
+
+      <Card className="p-0 sm:p-0">
+        {!requests && !error && <Spinner label="Loading requests…" />}
+
         {requests && requests.length === 0 && (
-          <Empty icon={Pill}>
-            <p>No refill requests waiting. Nice.</p>
-          </Empty>
+          <EmptyState icon={Pill} title={EMPTY_COPY[status].title}>
+            {EMPTY_COPY[status].body}
+          </EmptyState>
         )}
+
         {requests && requests.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Patient</th>
-                  <th>Medication</th>
-                  <th>Refills used</th>
-                  <th>Requested</th>
-                  <th>Patient note</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {requests.map((r) => (
-                  <tr key={r.id}>
-                    <td data-label="Patient">
-                      <strong>{r.patient_name}</strong>
-                      <div className="muted small">{r.patient_email}</div>
-                    </td>
-                    <td data-label="Medication">
-                      <strong>{r.medication}</strong> {r.dosage}
-                      <div className="muted small">{r.frequency}</div>
-                    </td>
-                    <td data-label="Refills used">
-                      {r.refills_used}/{r.refills_allowed}
-                      {(r.refills_used ?? 0) >= (r.refills_allowed ?? 0) && (
-                        <div><span className="badge warn">over allowance</span></div>
-                      )}
-                    </td>
-                    <td data-label="Requested" className="nowrap">{formatStamp(r.created_at)}</td>
-                    <td data-label="Patient note" className="muted">{r.note || '—'}</td>
-                    <td className="actions">
-                      <div className="action-group">
-                        <button className="btn sm" disabled={busy} onClick={() => decide(r, 'approved')}>
+          <Table>
+            <thead>
+              <tr>
+                <Th>Patient</Th>
+                <Th>Medication</Th>
+                <Th>Refills used</Th>
+                <Th>Requested</Th>
+                <Th>Patient note</Th>
+                {isQueue ? <Th align="right">Decision</Th> : <Th>Your decision</Th>}
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map((r) => (
+                <tr key={r.id}>
+                  <Td>
+                    <div className="font-semibold text-slate-900">{r.patient_name}</div>
+                    <div className="text-xs text-slate-500">{r.patient_email}</div>
+                  </Td>
+                  <Td>
+                    <span className="font-semibold">{r.medication}</span> {r.dosage}
+                    <div className="text-xs text-slate-500">{r.frequency}</div>
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    {r.refills_used}/{r.refills_allowed}
+                    {(r.refills_used ?? 0) >= (r.refills_allowed ?? 0) && (
+                      <div className="mt-1">
+                        <Badge tone="amber">Over allowance</Badge>
+                      </div>
+                    )}
+                  </Td>
+                  <Td className="whitespace-nowrap text-slate-600">
+                    {formatStamp(r.created_at)}
+                  </Td>
+                  <Td className="text-slate-600">{r.note || '—'}</Td>
+                  {isQueue ? (
+                    <Td align="right">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => decide(r, 'approved')}
+                        >
                           Approve
-                        </button>
-                        <button
-                          className="btn danger sm"
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
                           disabled={busy}
                           onClick={() => {
                             setDenying(r);
@@ -110,16 +173,32 @@ export default function DoctorRefills() {
                           }}
                         >
                           Deny
-                        </button>
+                        </Button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </Td>
+                  ) : (
+                    <Td>
+                      <Badge tone={r.status === 'approved' ? 'green' : 'red'}>
+                        {r.status === 'approved' ? 'Approved' : 'Denied'}
+                      </Badge>
+                      {r.decided_at && (
+                        <div className="mt-1 text-xs text-slate-500">
+                          {formatStamp(r.decided_at)}
+                        </div>
+                      )}
+                      {r.decision_note && (
+                        <div className="mt-1 max-w-xs text-xs text-slate-600">
+                          {r.decision_note}
+                        </div>
+                      )}
+                    </Td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-      </div>
+      </Card>
 
       <Modal
         open={!!denying}
@@ -127,36 +206,43 @@ export default function DoctorRefills() {
         onClose={() => setDenying(null)}
         footer={
           <>
-            <button className="btn secondary" onClick={() => setDenying(null)}>Go back</button>
-            <button
-              className="btn danger"
-              disabled={!denyNote.trim() || busy}
+            <Button onClick={() => setDenying(null)}>Go back</Button>
+            <Button
+              variant="danger"
+              loading={busy}
+              disabled={!denyNote.trim()}
               onClick={() => denying && decide(denying, 'denied', denyNote.trim())}
             >
-              {busy ? 'Saving…' : 'Deny with note'}
-            </button>
+              Deny with note
+            </Button>
           </>
         }
       >
         {denying && (
           <>
-            <p className="muted small">
-              {denying.medication} {denying.dosage} for {denying.patient_name}. Your note is shown
-              to the patient — tell them what to do instead (e.g. book a visit).
+            <p className="mb-4 text-sm text-slate-600">
+              {denying.medication} {denying.dosage} for {denying.patient_name}. Denying closes the
+              request and sends them your note, and MediSync prompts them to book a follow-up visit
+              so the medication can be reviewed.
             </p>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="deny-note">Note to patient (required)</label>
-              <textarea
+            <Field
+              label="Note to patient"
+              htmlFor="deny-note"
+              required
+              hint="Say what you need before you can authorize more — this is the only explanation they get."
+              className="mb-0"
+            >
+              <Textarea
                 id="deny-note"
                 rows={3}
-                placeholder="e.g. It's been a year since your last visit — please book a follow-up first."
+                placeholder="e.g. It's been a year since your last review — book a follow-up and we'll renew this at the visit."
                 value={denyNote}
                 onChange={(e) => setDenyNote(e.target.value)}
               />
-            </div>
+            </Field>
           </>
         )}
       </Modal>
-    </div>
+    </>
   );
 }

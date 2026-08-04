@@ -1,6 +1,6 @@
 # Deployment Guide
 
-MAPS is a single Node.js process that serves both the REST API and the built
+MediSync is a single Node.js process that serves both the REST API and the built
 React frontend. Data lives in a **PostgreSQL** database (we use a free
 [Neon](https://neon.tech) instance), so the app server itself is stateless —
 it can restart or redeploy without losing any data. Below: free hosting
@@ -105,11 +105,11 @@ npm run build       # build the React frontend
 
 ### 4. Run it as a background service (systemd)
 
-Create `/etc/systemd/system/maps.service`:
+Create `/etc/systemd/system/medisync.service`:
 
 ```ini
 [Unit]
-Description=MAPS scheduling system
+Description=MediSync scheduling system
 After=network.target
 
 [Service]
@@ -129,8 +129,8 @@ Enable and start it:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now maps
-sudo systemctl status maps      # verify it's running
+sudo systemctl enable --now medisync
+sudo systemctl status medisync   # verify it's running
 ```
 
 The app is now at `http://<your-ec2-public-ip>:3000`.
@@ -143,7 +143,7 @@ So visitors don't need to type `:3000`:
 sudo dnf install -y nginx        # or: sudo apt install -y nginx
 ```
 
-Create `/etc/nginx/conf.d/maps.conf`:
+Create `/etc/nginx/conf.d/medisync.conf`:
 
 ```nginx
 server {
@@ -171,7 +171,7 @@ Now the app is reachable at `http://<your-ec2-public-ip>/`.
 Elastic Beanstalk can run this repo directly:
 
 1. Install the EB CLI and run `eb init` (choose the **Node.js** platform).
-2. `eb create maps-env`
+2. `eb create medisync-env`
 3. In the environment configuration, set environment properties for
    `DATABASE_URL` (Neon), `JWT_SECRET`, and `NODE_ENV=production`.
 4. Beanstalk runs `npm install` and `npm start` automatically. Add a
@@ -188,7 +188,7 @@ cd MAPS-System
 git pull
 npm install
 npm run build                   # rebuild the frontend
-sudo systemctl restart maps     # (EC2 + systemd)
+sudo systemctl restart medisync # (EC2 + systemd)
 ```
 
 Data lives in Postgres and is preserved across restarts and updates. To wipe
@@ -204,4 +204,4 @@ and reload demo data, run `npm run reset-db`.
 | `EADDRINUSE`                         | Another process uses the port — change `PORT` in `.env`    |
 | "Failed to initialize the database"  | Check `DATABASE_URL` — copy it fresh from the Neon dashboard (must include `?sslmode=require`) |
 | "Frontend not built yet" page        | Run `npm run build` to produce `client/dist`               |
-| Logs                                 | `sudo journalctl -u maps -f` (systemd)                     |
+| Logs                                 | `sudo journalctl -u medisync -f` (systemd)                     |

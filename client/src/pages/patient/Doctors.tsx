@@ -1,77 +1,110 @@
+/**
+ * Find a doctor, and ask for a time.
+ *
+ * Three filters, because those are the three questions a patient actually has:
+ * who, what for, and where. Location is the newest of them and the one that
+ * changes the answer most — a physician the patient cannot travel to is not a
+ * result worth returning.
+ *
+ * The booking flow says "request" throughout on purpose. Submitting this form
+ * creates a `pending` appointment that clinic staff approve; telling the patient
+ * their slot is reserved would be a promise this system does not make.
+ */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { CalendarPlus, Info, MapPin, Search } from 'lucide-react';
 import {
-  api, formatTime, initials, todayStr,
-  type Doctor, type Specialty,
+  bookAppointment, formatDate, formatTime, getAvailability, listDoctors,
+  listLocations, listSpecialties, todayStr,
+  type Doctor, type Location, type Slot, type Specialty,
 } from '../../lib/api';
-import { Empty, Modal, Spinner } from '../../components/ui';
+import {
+  Alert, Avatar, Button, Card, EmptyState, Field, FilterBar, Input, Modal,
+  PageHeader, Select, SlotButton, Spinner, Textarea,
+} from '../../components/ui';
 import { useToast } from '../../components/Toast';
+
+/**
+ * A day's slots, split by the site they are held at. A physician can run a
+ * morning clinic in Midtown and an afternoon one in Brooklyn, so a flat grid of
+ * times would let a patient pick an hour without knowing which borough it is in.
+ */
+function groupByLocation(slots: Slot[]): { id: number; name: string; times: Slot[] }[] {
+  const groups: { id: number; name: string; times: Slot[] }[] = [];
+  for (const s of slots) {
+    const found = groups.find((g) => g.id === s.location_id);
+    if (found) found.times.push(s);
+    else groups.push({ id: s.location_id, name: s.location_name, times: [s] });
+  }
+  return groups;
+}
 
 export default function Doctors() {
   const navigate = useNavigate();
   const toast = useToast();
 
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [q, setQ] = useState('');
   const [specialty, setSpecialty] = useState('');
+  const [location, setLocation] = useState('');
   const [doctors, setDoctors] = useState<Doctor[] | null>(null);
   const [error, setError] = useState('');
 
-  // Booking modal state
+  // Request modal
   const [selected, setSelected] = useState<Doctor | null>(null);
   const [date, setDate] = useState('');
-  const [slots, setSlots] = useState<string[] | null>(null);
-  const [slot, setSlot] = useState('');
+  const [slots, setSlots] = useState<Slot[] | null>(null);
+  const [slot, setSlot] = useState<Slot | null>(null);
   const [reason, setReason] = useState('');
   const [modalError, setModalError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api<{ specialties: Specialty[] }>('/doctors/specialties')
+    listSpecialties()
       .then((d) => setSpecialties(d.specialties))
+      .catch(() => {
+        /* The filter degrades to "all specialties" rather than blocking search. */
+      });
+    listLocations()
+      .then((d) => setLocations(d.locations))
       .catch(() => {});
   }, []);
 
   const search = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (q.trim()) params.set('q', q.trim());
-    if (specialty) params.set('specialty', specialty);
     try {
-      const d = await api<{ doctors: Doctor[] }>(`/doctors?${params.toString()}`);
+      const d = await listDoctors({ q: q.trim(), specialty, location });
       setDoctors(d.doctors);
       setError('');
     } catch (err) {
       setError((err as Error).message);
       setDoctors([]);
     }
-  }, [q, specialty]);
+  }, [q, specialty, location]);
 
-  // Debounced search on q/specialty change.
+  // Debounced: typing a surname should not fire a request per keystroke.
   useEffect(() => {
     setDoctors(null);
-    const t = setTimeout(search, 250);
-    return () => clearTimeout(t);
+    const timer = window.setTimeout(search, 250);
+    return () => window.clearTimeout(timer);
   }, [search]);
 
-  function openBooking(doctor: Doctor) {
+  function openRequest(doctor: Doctor) {
     setSelected(doctor);
     setDate('');
     setSlots(null);
-    setSlot('');
+    setSlot(null);
     setReason('');
     setModalError('');
   }
 
-  async function loadSlots(newDate: string) {
+  async function loadSlots(doctorId: number, newDate: string) {
     setDate(newDate);
-    setSlot('');
+    setSlot(null);
     setSlots(null);
-    if (!newDate || !selected) return;
+    if (!newDate) return;
     try {
-      const d = await api<{ slots: string[] }>(
-        `/doctors/${selected.id}/availability?date=${newDate}`
-      );
+      const d = await getAvailability(doctorId, newDate);
       setSlots(d.slots);
     } catch (err) {
       setModalError((err as Error).message);
@@ -79,173 +112,248 @@ export default function Doctors() {
     }
   }
 
-  async function confirmBooking() {
+  async function submitRequest() {
     if (!selected || !slot) return;
     setBusy(true);
     setModalError('');
     try {
-      await api('/appointments', {
-        method: 'POST',
-        body: {
-          doctor_id: selected.id,
-          appt_date: date,
-          appt_time: slot,
-          reason: reason.trim() || null,
-        },
+      await bookAppointment({
+        doctor_id: selected.id,
+        appt_date: date,
+        appt_time: slot.time,
+        reason: reason.trim() || undefined,
       });
       setSelected(null);
-      toast('Appointment booked — your slot is reserved.', 'success');
-      setTimeout(() => navigate('/app/appointments'), 600);
+      toast('Request submitted — the clinic will confirm your time.', 'success');
+      navigate('/app/appointments');
     } catch (err) {
+      // Most often a 409: someone booked that slot between the availability
+      // call and this one. Re-reading the day is the only honest recovery.
       setModalError((err as Error).message);
-      // The slot may have been taken — refresh availability.
-      loadSlots(date);
+      loadSlots(selected.id, date);
     } finally {
       setBusy(false);
     }
   }
 
-  return (
-    <div className="container stack">
-      <div>
-        <h1>Find a doctor</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Search by name or specialty, then pick an open time.
-        </p>
-      </div>
+  const groups = slots ? groupByLocation(slots) : [];
 
-      <div className="card">
-        <div className="field-row" style={{ marginBottom: 0 }}>
-          <div className="field" style={{ marginBottom: 8 }}>
-            <label htmlFor="q">Search by name</label>
-            <input
-              className="input"
+  return (
+    <>
+      <PageHeader
+        title="Find a doctor"
+        subtitle="Search by name, specialty or clinic site, then ask for a time that suits you."
+      />
+
+      <Card className="mb-6">
+        <FilterBar>
+          <Field label="Search by name" htmlFor="q" className="mb-0">
+            <Input
               id="q"
-              placeholder="e.g. Chen"
+              placeholder="e.g. Osei"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
-          </div>
-          <div className="field" style={{ marginBottom: 8 }}>
-            <label htmlFor="specialty">Specialty</label>
-            <select id="specialty" value={specialty} onChange={(e) => setSpecialty(e.target.value)}>
+          </Field>
+          <Field label="Specialty" htmlFor="specialty" className="mb-0">
+            <Select
+              id="specialty"
+              value={specialty}
+              onChange={(e) => setSpecialty(e.target.value)}
+            >
               <option value="">All specialties</option>
               {specialties.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
               ))}
-            </select>
-          </div>
-        </div>
-      </div>
+            </Select>
+          </Field>
+          <Field label="Location" htmlFor="location" className="mb-0">
+            <Select id="location" value={location} onChange={(e) => setLocation(e.target.value)}>
+              <option value="">All locations</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </FilterBar>
+      </Card>
 
-      {error && <div className="alert error">{error}</div>}
-      {!doctors && !error && <Spinner />}
-      {doctors && doctors.length === 0 && !error && (
-        <div className="card">
-          <Empty icon={Search}>
-            <p>No doctors match your search.</p>
-          </Empty>
-        </div>
+      {error && (
+        <Alert tone="error" className="mb-6">
+          {error}
+        </Alert>
       )}
+      {!doctors && !error && <Spinner label="Searching physicians…" />}
+      {doctors && doctors.length === 0 && !error && (
+        <Card>
+          <EmptyState icon={Search} title="No physicians match your search">
+            Try a different specialty, or clear the location filter to see every site.
+          </EmptyState>
+        </Card>
+      )}
+
       {doctors && doctors.length > 0 && (
-        <div className="grid cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           {doctors.map((d) => (
-            <div className="card doctor-card" key={d.id}>
-              <div className="doctor-head">
-                <div className="avatar">{initials(d.full_name)}</div>
-                <div>
-                  <strong>{d.full_name}</strong>
-                  <div className="muted small">
-                    {d.specialty_name || 'General'}
+            <Card key={d.id} className="flex flex-col">
+              <div className="flex items-start gap-3">
+                <Avatar name={d.full_name} />
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{d.full_name}</p>
+                  <p className="truncate text-sm text-slate-500">
+                    {d.specialty_name || 'General practice'}
                     {d.room ? ` · Room ${d.room}` : ''}
-                  </div>
+                  </p>
                 </div>
               </div>
-              {d.bio && <div className="bio">{d.bio}</div>}
-              <div>
-                <button className="btn sm" onClick={() => openBooking(d)}>
-                  Book appointment
-                </button>
+
+              {d.bio && <p className="mt-3 text-sm leading-relaxed text-slate-600">{d.bio}</p>}
+
+              <div className="mt-3">
+                <p className="mb-1.5 text-[0.7rem] font-bold uppercase tracking-wider text-slate-500">
+                  Practises at
+                </p>
+                {d.locations.length === 0 ? (
+                  <p className="text-sm text-slate-500">No clinic times published yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {d.locations.map((l) => (
+                      <span
+                        key={l.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600"
+                      >
+                        <MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                        {l.name}
+                        <span className="text-slate-400">{l.city}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
+
+              <div className="mt-4 pt-1">
+                <Button variant="primary" size="sm" icon={CalendarPlus} onClick={() => openRequest(d)}>
+                  Request appointment
+                </Button>
+              </div>
+            </Card>
           ))}
         </div>
       )}
 
       <Modal
         open={!!selected}
-        title="Book appointment"
+        title="Request an appointment"
         onClose={() => setSelected(null)}
         footer={
           <>
-            <button className="btn secondary" onClick={() => setSelected(null)}>
-              Cancel
-            </button>
-            <button className="btn" id="m-confirm" disabled={!slot || busy} onClick={confirmBooking}>
-              {busy ? 'Booking…' : 'Confirm booking'}
-            </button>
+            <Button onClick={() => setSelected(null)}>Cancel</Button>
+            <Button
+              variant="primary"
+              id="m-confirm"
+              disabled={!slot}
+              loading={busy}
+              onClick={submitRequest}
+            >
+              {busy ? 'Sending…' : 'Send request'}
+            </Button>
           </>
         }
       >
         {selected && (
           <>
-            {modalError && <div className="alert error">{modalError}</div>}
-            <div className="row" style={{ gap: 12, alignItems: 'center', marginBottom: 16 }}>
-              <div className="avatar">{initials(selected.full_name)}</div>
-              <div>
-                <strong>{selected.full_name}</strong>
-                <div className="muted small">{selected.specialty_name || 'General'}</div>
+            {modalError && (
+              <Alert tone="error" className="mb-4">
+                {modalError}
+              </Alert>
+            )}
+
+            <div className="mb-4 flex items-center gap-3">
+              <Avatar name={selected.full_name} />
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-900">{selected.full_name}</p>
+                <p className="truncate text-sm text-slate-500">
+                  {selected.specialty_name || 'General practice'}
+                </p>
               </div>
             </div>
-            <div className="field">
-              <label htmlFor="m-date">Choose a date</label>
-              <input
-                className="input"
+
+            <Alert tone="info" icon={Info} className="mb-4">
+              Choosing a time sends a request. The clinic confirms it, usually the same working
+              day, and you'll see it change to <strong>Confirmed</strong> in My Appointments.
+            </Alert>
+
+            <Field label="Choose a date" htmlFor="m-date">
+              <Input
                 type="date"
                 id="m-date"
                 min={todayStr()}
                 value={date}
-                onChange={(e) => loadSlots(e.target.value)}
+                onChange={(e) => loadSlots(selected.id, e.target.value)}
               />
-            </div>
-            <div className="field">
-              <label>Available times</label>
-              <div className="slots" id="m-slots">
-                {!date && <span className="muted small">Pick a date to see open times.</span>}
-                {date && slots === null && <span className="spinner" />}
-                {date && slots && slots.length === 0 && (
-                  <span className="muted small">
-                    No open times on this date. Try another day (doctors work weekdays).
-                  </span>
-                )}
-                {date &&
-                  slots &&
-                  slots.map((s) => (
-                    <button
-                      type="button"
-                      key={s}
-                      className={`slot${slot === s ? ' selected' : ''}`}
-                      onClick={() => setSlot(s)}
-                    >
-                      {formatTime(s)}
-                    </button>
-                  ))}
-              </div>
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="m-reason">Reason for visit (optional)</label>
-              <textarea
+            </Field>
+
+            <Field label="Available times">
+              {!date && <p className="text-sm text-slate-500">Pick a date to see open times.</p>}
+              {date && slots === null && <Spinner label="Checking availability…" />}
+              {date && slots && slots.length === 0 && (
+                <p className="text-sm text-slate-500">
+                  No open times on this date. {selected.full_name} may not hold clinic that day, or
+                  it may be fully booked — try another.
+                </p>
+              )}
+              {groups.map((g) => (
+                <div key={g.id} className="mb-3 last:mb-0">
+                  {/* The site is a heading rather than a caption on each pill:
+                      the patient chooses a building first, then an hour in it. */}
+                  <p className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-600">
+                    <MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                    {g.name}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {g.times.map((s) => (
+                      <SlotButton
+                        key={`${s.location_id}-${s.time}`}
+                        selected={slot?.time === s.time && slot?.location_id === s.location_id}
+                        onClick={() => setSlot(s)}
+                      >
+                        {formatTime(s.time)}
+                      </SlotButton>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {/* Reads back the whole choice — day, hour and building — because
+                  the pills alone only show the hour. */}
+              {slot && (
+                <p className="mt-3 text-sm text-slate-600">
+                  Requesting <strong>{formatTime(slot.time)}</strong> on{' '}
+                  <strong>{formatDate(date)}</strong> at <strong>{slot.location_name}</strong>.
+                </p>
+              )}
+            </Field>
+
+            <Field
+              label="Reason for visit (optional)"
+              htmlFor="m-reason"
+              hint="Helps the clinic put you with the right person for long enough."
+              className="mb-0"
+            >
+              <Textarea
                 id="m-reason"
                 placeholder="Briefly describe your symptoms or reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
-            </div>
+            </Field>
           </>
         )}
       </Modal>
-    </div>
+    </>
   );
 }

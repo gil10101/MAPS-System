@@ -9,7 +9,7 @@
 # serves both the API and the built frontend.
 services:
   - type: web
-    name: maps-system
+    name: medisync-system
     runtime: node
     plan: free
     buildCommand: npm install && npm run build
@@ -19,5 +19,7 @@ services:
         value: production
       - key: JWT_SECRET
         generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
       - key: DATABASE_URL
         sync: false   # set this in the Render dashboard (Neon connection string)

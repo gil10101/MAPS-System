@@ -1,20 +1,39 @@
-import { useEffect } from 'react';
+/**
+ * The MediSync app shell.
+ *
+ * Phones get a top bar plus a bottom tab bar; tablets and up get the navy
+ * sidebar. Both navigations render from the same group definitions, so a route
+ * can never exist in one and be missing from the other.
+ *
+ * The shell itself is the navy surface; page content floats on a white panel
+ * inside it. On desktop that panel is the scroll container, which keeps the
+ * sidebar and the notification tray fixed while a long report scrolls.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import {
-  Calendar, CalendarClock, HeartPulse, Home, LayoutGrid, LogOut, Pill, Search,
-  Stethoscope, User as UserIcon, Users,
+  Bell, BarChart3, Calendar, CalendarClock, CalendarRange, Check, Home,
+  LayoutGrid, LogOut, MapPin, MoreHorizontal, Pill, Search, Stethoscope,
+  Tags, User as UserIcon, Users, X,
   type LucideIcon,
 } from 'lucide-react';
-import { getUser, homeFor, initials, logout } from '../lib/api';
+import {
+  formatRelative, getUser, homeFor, listNotifications, logout,
+  markAllNotificationsRead, markNotificationRead, roleLabel,
+  type Notification,
+} from '../lib/api';
+import { Avatar, IconButton, cx } from './ui';
 
 interface NavItem {
   to: string;
+  /** Exact-match the route: index routes would otherwise stay lit everywhere. */
   end?: boolean;
   label: string;
-  /** Tab-bar caption. Falls back to `label` when it already fits. */
+  /** Tab-bar caption, for labels too long for a 5-across bar. */
   short?: string;
   icon: LucideIcon;
 }
+
 interface NavGroup {
   section: string;
   links: NavItem[];
@@ -31,22 +50,13 @@ const PATIENT_NAV: NavGroup[] = [
   },
   {
     section: 'My care',
-    links: [{ to: '/app/health', label: 'Health Record', short: 'Health', icon: HeartPulse }],
+    links: [
+      { to: '/app/medications', label: 'Medications', short: 'Meds', icon: Pill },
+    ],
   },
   {
     section: 'Account',
     links: [{ to: '/app/profile', label: 'Profile', icon: UserIcon }],
-  },
-];
-
-const ADMIN_NAV: NavGroup[] = [
-  {
-    section: 'Clinic',
-    links: [
-      { to: '/admin', end: true, label: 'Overview', icon: LayoutGrid },
-      { to: '/admin/appointments', label: 'Appointments', short: 'Appts', icon: Calendar },
-      { to: '/admin/doctors', label: 'Doctors', icon: Stethoscope },
-    ],
   },
 ];
 
@@ -57,99 +67,387 @@ const DOCTOR_NAV: NavGroup[] = [
       { to: '/doctor', end: true, label: 'Schedule', icon: CalendarClock },
       { to: '/doctor/patients', label: 'My Patients', short: 'Patients', icon: Users },
       { to: '/doctor/refills', label: 'Refill Requests', short: 'Refills', icon: Pill },
+      { to: '/doctor/reports', label: 'Reports', icon: BarChart3 },
     ],
   },
 ];
 
-/**
- * App shell. Phones get a top bar plus a bottom tab bar; tablets and up get the
- * navy sidebar. Both navigations render from the same groups — CSS decides
- * which is visible, so there is one source of truth for the routes.
- */
-export default function Layout() {
-  const user = getUser();
+const ADMIN_NAV: NavGroup[] = [
+  {
+    section: 'Clinic',
+    links: [
+      { to: '/admin', end: true, label: 'Overview', icon: LayoutGrid },
+      { to: '/admin/appointments', label: 'Appointments', short: 'Appts', icon: Calendar },
+      { to: '/admin/reports', label: 'Reports', icon: BarChart3 },
+    ],
+  },
+  {
+    section: 'Setup',
+    links: [
+      { to: '/admin/doctors', label: 'Physicians', icon: Stethoscope },
+      { to: '/admin/schedules', label: 'Schedules', icon: CalendarRange },
+      { to: '/admin/locations', label: 'Locations', icon: MapPin },
+      { to: '/admin/specialties', label: 'Specialties', icon: Tags },
+    ],
+  },
+];
 
-  useEffect(() => {
-    document.body.classList.add('has-sidebar');
-    return () => document.body.classList.remove('has-sidebar');
+/** How many links fit across a phone before the captions start truncating. */
+const MAX_TABS = 5;
+
+function Wordmark({ className }: { className?: string }) {
+  return (
+    <span className={cx('text-lg font-bold tracking-tight text-white', className)}>
+      Medi<span className="text-accent-500">Sync</span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Notification tray (A7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Polls every 60s rather than opening a socket: the events here (a booking
+ * approved, a refill decided) are minutes-scale, and a prototype that survives
+ * a dropped connection by simply asking again is worth more than push.
+ */
+function NotificationTray() {
+  const [items, setItems] = useState<Notification[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await listNotifications();
+      setItems(data.notifications);
+      setUnread(data.unread_count);
+    } catch {
+      // A failed poll is not worth interrupting the page for; the next one in
+      // 60 seconds will pick the tray back up.
+    }
   }, []);
 
-  if (!user) return null; // Protected handles the redirect.
-  const groups =
-    user.role === 'admin' ? ADMIN_NAV : user.role === 'doctor' ? DOCTOR_NAV : PATIENT_NAV;
-  const tabs = groups.flatMap((g) => g.links);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  /** Optimistic: the tray reflects the click immediately, the server catches up. */
+  async function readOne(n: Notification) {
+    if (n.read_at) return;
+    setItems((list) =>
+      list.map((i) => (i.id === n.id ? { ...i, read_at: new Date().toISOString() } : i))
+    );
+    setUnread((c) => Math.max(0, c - 1));
+    try {
+      await markNotificationRead(n.id);
+    } catch {
+      load();
+    }
+  }
+
+  async function readAll() {
+    const stamp = new Date().toISOString();
+    setItems((list) => list.map((i) => (i.read_at ? i : { ...i, read_at: stamp })));
+    setUnread(0);
+    try {
+      await markAllNotificationsRead();
+    } catch {
+      load();
+    }
+  }
 
   return (
-    <>
-      <header className="topbar">
-        <Link className="brand" to={homeFor(user)}>
-          MAP<b>S</b>
-        </Link>
-        <div className="topbar-right">
-          <span className="avatar sm" title={user.full_name}>
-            {initials(user.full_name)}
-          </span>
-          <button className="icon-btn" onClick={logout} aria-label="Log out">
-            <LogOut className="lucide" aria-hidden="true" />
-          </button>
-        </div>
-      </header>
+    <div className="relative" ref={wrap}>
+      <IconButton
+        icon={Bell}
+        label={unread > 0 ? `Notifications (${unread} unread)` : 'Notifications'}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="bg-white/10 text-white hover:bg-white/20"
+      />
+      {unread > 0 && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent-500 px-1 text-[0.625rem] font-bold text-white ring-2 ring-navy-900"
+        >
+          {unread > 9 ? '9+' : unread}
+        </span>
+      )}
 
-      <aside className="sidebar">
-        <Link className="brand" to={homeFor(user)}>
-          MAP<b>S</b>
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[22rem] max-w-[calc(100vw-2rem)] animate-fade-in overflow-hidden rounded-xl bg-white shadow-xl ring-1 ring-slate-200">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+            <h3>Notifications</h3>
+            <button
+              type="button"
+              onClick={readAll}
+              disabled={unread === 0}
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-accent-600 hover:bg-accent-50 disabled:pointer-events-none disabled:text-slate-300"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              Mark all read
+            </button>
+          </div>
+
+          <div className="max-h-[24rem] overflow-y-auto">
+            {items.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-slate-500">
+                Nothing here yet. Updates about your appointments will show up in this tray.
+              </p>
+            ) : (
+              items.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => readOne(n)}
+                  className={cx(
+                    'flex w-full gap-3 border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50',
+                    !n.read_at && 'bg-accent-50 hover:bg-accent-50/70'
+                  )}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cx(
+                      'mt-1.5 h-2 w-2 flex-none rounded-full',
+                      n.read_at ? 'bg-transparent' : 'bg-accent-600'
+                    )}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline justify-between gap-2">
+                      <span
+                        className={cx(
+                          'truncate text-sm',
+                          n.read_at ? 'font-medium text-slate-700' : 'font-bold text-slate-900'
+                        )}
+                      >
+                        {n.title}
+                      </span>
+                      <span className="flex-none text-xs text-slate-400">
+                        {formatRelative(n.created_at)}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-slate-600">
+                      {n.body}
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shell
+// ---------------------------------------------------------------------------
+
+export default function Layout() {
+  const user = getUser();
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Protected handles the redirect; rendering nothing avoids a flash of chrome
+  // belonging to a user who is not signed in.
+  if (!user) return null;
+
+  const groups =
+    user.role === 'admin' ? ADMIN_NAV : user.role === 'doctor' ? DOCTOR_NAV : PATIENT_NAV;
+  const allLinks = groups.flatMap((g) => g.links);
+  // Admin has more destinations than a phone bar can hold. Show the first four
+  // and put the rest behind "More" — every route stays reachable on mobile.
+  const overflow = allLinks.length > MAX_TABS;
+  const tabs = overflow ? allLinks.slice(0, MAX_TABS - 1) : allLinks;
+
+  return (
+    <div className="flex min-h-dvh flex-col bg-navy-900 md:h-dvh md:flex-row md:overflow-hidden">
+      {/* Sidebar — tablet and up */}
+      <aside className="hidden w-sidebar flex-none flex-col px-3 py-6 md:flex">
+        <Link to={homeFor(user)} className="mb-6 px-2">
+          <Wordmark />
         </Link>
-        <nav className="side-nav" aria-label="Main">
+
+        <nav className="flex-1 overflow-y-auto" aria-label="Main">
           {groups.map((g) => (
-            <div className="side-group" key={g.section}>
-              <div className="side-section">{g.section}</div>
+            <div className="mb-6" key={g.section}>
+              <div className="px-3 pb-2 text-[0.68rem] font-bold uppercase tracking-widest text-white/50">
+                {g.section}
+              </div>
               {g.links.map((l) => (
                 <NavLink
                   key={l.to}
                   to={l.to}
                   end={l.end}
-                  className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}
+                  className={({ isActive }) =>
+                    cx(
+                      'mb-0.5 flex min-h-tap items-center gap-3 rounded-lg px-3 text-sm transition-colors',
+                      isActive
+                        ? 'bg-white/15 font-semibold text-white'
+                        : 'font-medium text-white/70 hover:bg-white/10 hover:text-white'
+                    )
+                  }
                 >
-                  <l.icon className="lucide" aria-hidden="true" />
-                  <span className="label">{l.label}</span>
+                  <l.icon className="h-[1.125rem] w-[1.125rem]" aria-hidden="true" />
+                  {l.label}
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
-        <div className="side-foot">
-          <div className="side-user">
-            <span className="avatar sm">{initials(user.full_name)}</span>
-            <span className="side-user-meta">
-              <span className="name">{user.full_name}</span>
-              <span className="role">
-                {user.role === 'admin' ? 'Administrator' : user.role === 'doctor' ? 'Physician' : 'Patient'}
-              </span>
+
+        <div className="border-t border-white/10 pt-4">
+          <div className="mb-3 flex items-center gap-3 px-1">
+            <Avatar name={user.full_name} size="sm" className="bg-white/10" />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold text-white">{user.full_name}</span>
+              <span className="text-xs text-white/50">{roleLabel(user.role)}</span>
             </span>
           </div>
-          <button className="btn secondary sm block" onClick={logout}>
-            <LogOut className="lucide in-btn" /> Log out
+          <button
+            type="button"
+            onClick={logout}
+            className="flex min-h-tap w-full items-center justify-center gap-2 rounded-lg bg-white/10 text-sm font-semibold text-white hover:bg-white/20"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            Log out
           </button>
         </div>
       </aside>
 
-      <main className="page">
-        <Outlet />
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Topbar. On desktop it carries only the tray; the sidebar has the rest. */}
+        <header className="flex items-center gap-2 px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top,0px))] md:px-3 md:pt-6">
+          <Link to={homeFor(user)} className="md:hidden">
+            <Wordmark />
+          </Link>
+          <div className="ml-auto flex items-center gap-2">
+            <NotificationTray />
+            <Avatar name={user.full_name} size="sm" className="bg-white/10 md:hidden" />
+            <IconButton
+              icon={LogOut}
+              label="Log out"
+              onClick={logout}
+              className="bg-white/10 text-white hover:bg-white/20 md:hidden"
+            />
+          </div>
+        </header>
 
-      <nav className="tabbar" aria-label="Main">
+        <main className="flex-1 bg-white md:m-3 md:mt-0 md:min-h-0 md:overflow-y-auto md:rounded-xl">
+          <div className="mx-auto w-full max-w-content px-4 pb-28 pt-6 sm:px-6 md:pb-12 lg:px-8">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+
+      {/* Bottom tab bar — phones only */}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50 flex border-t border-white/10 bg-navy-900 pb-[env(safe-area-inset-bottom,0px)] md:hidden"
+        aria-label="Main"
+      >
         {tabs.map((l) => (
           <NavLink
             key={l.to}
             to={l.to}
             end={l.end}
-            className={({ isActive }) => `tab-link${isActive ? ' active' : ''}`}
+            className={({ isActive }) =>
+              cx(
+                'flex h-tabbar min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-semibold',
+                isActive ? 'text-white' : 'text-white/50'
+              )
+            }
           >
-            <l.icon className="lucide" aria-hidden="true" />
-            <span className="label">{l.short || l.label}</span>
+            {({ isActive }) => (
+              <>
+                <l.icon
+                  className={cx('h-[1.125rem] w-[1.125rem]', isActive && 'text-accent-500')}
+                  aria-hidden="true"
+                />
+                <span className="max-w-full truncate px-0.5">{l.short || l.label}</span>
+              </>
+            )}
           </NavLink>
         ))}
+        {overflow && (
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            className="flex h-tabbar min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-semibold text-white/50"
+          >
+            <MoreHorizontal className="h-[1.125rem] w-[1.125rem]" aria-hidden="true" />
+            <span>More</span>
+          </button>
+        )}
       </nav>
-    </>
+
+      {/* Overflow sheet for the links the tab bar could not fit */}
+      {moreOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end bg-navy-900/60 md:hidden"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setMoreOpen(false);
+          }}
+        >
+          <div className="max-h-[80dvh] w-full overflow-y-auto rounded-t-xl bg-white px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] pt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <h3>Menu</h3>
+              <IconButton
+                icon={X}
+                label="Close menu"
+                variant="ghost"
+                onClick={() => setMoreOpen(false)}
+              />
+            </div>
+            {groups.map((g) => (
+              <div key={g.section} className="mb-3">
+                <div className="px-1 pb-1 text-[0.68rem] font-bold uppercase tracking-widest text-slate-400">
+                  {g.section}
+                </div>
+                {g.links.map((l) => (
+                  <NavLink
+                    key={l.to}
+                    to={l.to}
+                    end={l.end}
+                    onClick={() => setMoreOpen(false)}
+                    className={({ isActive }) =>
+                      cx(
+                        'flex min-h-tap items-center gap-3 rounded-lg px-3 text-sm',
+                        isActive
+                          ? 'bg-accent-50 font-semibold text-accent-700'
+                          : 'font-medium text-slate-700 hover:bg-slate-100'
+                      )
+                    }
+                  >
+                    <l.icon className="h-[1.125rem] w-[1.125rem]" aria-hidden="true" />
+                    {l.label}
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

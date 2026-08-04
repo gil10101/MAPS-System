@@ -1,7 +1,7 @@
 {
-  "name": "maps-system",
+  "name": "medisync-system",
   "version": "2.0.0",
-  "description": "Medical Appointment and Patient Scheduling System (MAPS) - CIS 9590 group project",
+  "description": "MediSync - Medical Appointment and Patient Scheduling System - CIS 9590 group project",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
