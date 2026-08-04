@@ -146,9 +146,49 @@ const DOCTORS = [
   },
 ];
 
+// The clinic's wider patient population. These carry the bulk of the schedule
+// so the named patients below keep a book a real person could plausibly have:
+// splitting several hundred visits across six people would give every one of
+// them a visit most days of the week, which looks wrong the moment anyone opens
+// a patient's appointment list on screen. They also give the physician panels
+// and the Patient Visit History report something to range over.
+const BACKGROUND_FIRST = [
+  'Amara', 'Beatriz', 'Caleb', 'Dmitri', 'Elena', 'Farah', 'Grace', 'Hassan',
+  'Imani', 'Jonas', 'Keiko', 'Liam', 'Mireille', 'Nadia', 'Omar', 'Priya',
+  'Quentin', 'Rosa', 'Samuel', 'Tomas', 'Ursula', 'Viktor', 'Wei', 'Yusuf',
+];
+const BACKGROUND_LAST = [
+  'Okonkwo', 'Silva', 'Whitfield', 'Petrov', 'Marchetti', 'Haddad', 'Boateng',
+  'Kaur', 'Lindqvist', 'Moreau', 'Tanaka', 'Delgado', 'Novak', 'Fitzgerald',
+  'Abebe', 'Sorensen',
+];
+
+/** 40 background patients, generated deterministically so reseeds match. */
+const BACKGROUND_PATIENTS = Array.from({ length: 40 }, (_, i) => {
+  const first = BACKGROUND_FIRST[i % BACKGROUND_FIRST.length];
+  const last = BACKGROUND_LAST[(i * 7 + 3) % BACKGROUND_LAST.length];
+  const year = 1948 + ((i * 17) % 58);
+  const month = String(1 + ((i * 5) % 12)).padStart(2, '0');
+  const day = String(1 + ((i * 11) % 28)).padStart(2, '0');
+  return {
+    key: `bg${i}`,
+    first,
+    last,
+    email: `${first.toLowerCase()}.${last.toLowerCase()}${i}@example.com`,
+    dob: `${year}-${month}-${day}`,
+    phone: `917-555-${String(3000 + i).padStart(4, '0')}`,
+    gender: ['female', 'male', 'other', 'prefer_not_to_say'][i % 4],
+    address: `${100 + i * 3} Demo St, New York, NY 10001`,
+    insurance: ['Aetna', 'BlueCross', 'UnitedHealthcare', 'Cigna', 'Fidelis Care'][i % 5],
+    notifyEmail: i % 3 !== 0,
+    notifySms: i % 4 === 0,
+    background: true,
+  };
+});
+
 // Kevin Nguyen is deliberately a minor: without a pediatric patient the
 // pediatrician has no panel, no chart, and no refill queue to show.
-const PATIENTS = [
+const NAMED_PATIENTS = [
   {
     key: 'jordan', first: 'Jordan', last: 'Alvarez', email: 'jalvarez@example.com',
     dob: '1991-02-17', phone: '917-555-2101', gender: 'prefer_not_to_say',
@@ -187,27 +227,35 @@ const PATIENTS = [
   },
 ];
 
+// Everyone the seed creates. The named patients come first so their ids are
+// stable and low, which makes them easy to find when demonstrating.
+const PATIENTS = NAMED_PATIENTS.concat(BACKGROUND_PATIENTS);
+
 /**
- * Appointments. `week`/`day` place a row relative to the current week (-8 to
- * +3); `ahead` places it on the nth upcoming weekday, for the visits that need
- * to be imminent. `key` is only present where something else points at the row.
+ * Appointments. `week`/`day` place a row relative to the current week: week -1
+ * is last week (all of it in the past), week 0 is the current one. `key` is
+ * only present where something else points at the row.
  *
- * Coverage is deliberate: several future `pending` requests for the admin
- * approval demo, cancellations from both sides with real reasons, no-shows so
- * the rate is non-zero, and past `completed` visits carrying the clinical note
- * a doctor writes at completion.
+ * Everything sits inside the demo window — last Monday through the Wednesday of
+ * the current week — so the whole book can be walked on screen without paging
+ * through months of history.
+ *
+ * Coverage is deliberate: `pending` requests dated after today for the admin
+ * approval demo, `confirmed` visits dated today for the physician to complete,
+ * cancellations from both sides with real reasons, no-shows so the rate is not
+ * zero, and past `completed` visits carrying the note written at completion.
  */
 const APPOINTMENTS = [
   // --- Past: completed, each with the note written at completion -----------
   {
-    patient: 'john', doctor: 'skim', week: -8, day: TUE, time: '09:30',
+    patient: 'john', doctor: 'skim', week: -1, day: TUE, time: '09:30',
     reason: 'Annual physical', status: 'completed',
     notes: 'Routine annual exam. BP 138/86, BMI 27.4, remainder of the examination unremarkable. '
       + 'Discussed diet and a target of 30 minutes walking daily. Ordered fasting lipids and HbA1c, '
       + 'and referred to cardiology for the raised readings.',
   },
   {
-    patient: 'jordan', doctor: 'skim', week: -7, day: WED, time: '11:00',
+    patient: 'jordan', doctor: 'skim', week: -1, day: WED, time: '11:00',
     reason: 'Persistent cough', status: 'completed',
     notes: 'Three weeks of dry cough, no fever and no weight loss. Chest clear on auscultation, '
       + 'oxygen saturation 98% on room air. Most consistent with post-viral cough. Advised humidified '
@@ -215,14 +263,14 @@ const APPOINTMENTS = [
   },
   {
     key: 'bp-followup',
-    patient: 'john', doctor: 'rosei', week: -6, day: MON, time: '10:30',
+    patient: 'john', doctor: 'rosei', week: -1, day: MON, time: '10:30',
     reason: 'Blood pressure follow-up', status: 'completed',
     notes: 'Home readings averaging 146/90 over two weeks. ECG shows normal sinus rhythm. Started '
       + 'lisinopril 10 mg once daily and reviewed side effects, including dry cough. Recheck in six '
       + 'weeks with a repeat basic metabolic panel.',
   },
   {
-    patient: 'marcus', doctor: 'rosei', week: -5, day: THU, time: '09:00',
+    patient: 'marcus', doctor: 'rosei', week: -1, day: THU, time: '09:00',
     reason: 'Palpitations after exercise', status: 'completed',
     notes: 'Palpitations after intense cycling, settling within minutes, no syncope or chest pain. '
       + 'Examination and resting ECG normal. Fitted a 48-hour Holter monitor and asked him to log '
@@ -230,7 +278,7 @@ const APPOINTMENTS = [
   },
   {
     key: 'eczema',
-    patient: 'lucia', doctor: 'jdiaz', week: -5, day: TUE, time: '14:00',
+    patient: 'lucia', doctor: 'jdiaz', week: -1, day: TUE, time: '14:00',
     reason: 'Eczema flare on both hands', status: 'completed',
     notes: 'Bilateral hand eczema with fissuring across the knuckles, no signs of secondary infection. '
       + 'Pattern fits irritant contact from workplace cleaning products. Prescribed triamcinolone 0.1% '
@@ -238,7 +286,7 @@ const APPOINTMENTS = [
   },
   {
     key: 'well-child',
-    patient: 'kevin', doctor: 'apatel', week: -4, day: WED, time: '10:00',
+    patient: 'kevin', doctor: 'apatel', week: -1, day: WED, time: '10:00',
     reason: 'Well-child visit and vaccinations', status: 'completed',
     notes: 'Growth tracking along the 60th percentile for height and weight. Immunizations brought up '
       + 'to date. Mild intermittent asthma remains well controlled; inhaler technique reviewed with a '
@@ -246,7 +294,7 @@ const APPOINTMENTS = [
   },
   {
     key: 'diabetes-review',
-    patient: 'anita', doctor: 'lbennett', week: -4, day: FRI, time: '09:30',
+    patient: 'anita', doctor: 'lbennett', week: -1, day: FRI, time: '09:30',
     reason: 'Diabetes management review', status: 'completed',
     notes: 'Type 2 diabetes review. HbA1c 7.4%, down from 8.1% six months ago. Feet examined, sensation '
       + 'intact with no ulceration. Continued metformin 500 mg twice daily. Retinal screening booked '
@@ -254,7 +302,7 @@ const APPOINTMENTS = [
   },
   {
     key: 'shoulder',
-    patient: 'marcus', doctor: 'erossi', week: -3, day: TUE, time: '15:00',
+    patient: 'marcus', doctor: 'erossi', week: -1, day: TUE, time: '15:00',
     reason: 'Right shoulder pain', status: 'completed',
     notes: 'Two months of right shoulder pain on overhead movement. Positive impingement signs with '
       + 'full passive range, consistent with rotator cuff tendinopathy. Naproxen for two weeks plus a '
@@ -262,14 +310,14 @@ const APPOINTMENTS = [
   },
   {
     key: 'migraine',
-    patient: 'jordan', doctor: 'dkim', week: -2, day: THU, time: '13:30',
+    patient: 'jordan', doctor: 'dkim', week: -1, day: THU, time: '13:30',
     reason: 'Recurring migraines', status: 'completed',
     notes: 'Migraine with visual aura, two to three episodes monthly, clearly triggered by disrupted '
       + 'sleep. Neurological examination normal. Started sumatriptan 50 mg at onset and a headache '
       + 'diary. Discussed preventive treatment if frequency rises above four attacks a month.',
   },
   {
-    patient: 'john', doctor: 'skim', week: -2, day: MON, time: '09:00',
+    patient: 'john', doctor: 'skim', week: -1, day: MON, time: '09:00',
     reason: 'Review of blood work', status: 'completed',
     notes: 'Reviewed fasting labs: LDL 138 mg/dL, HbA1c 5.6%, renal function normal on lisinopril. '
       + 'BP today 128/80, a good response to treatment. Continue the current dose and repeat lipids '
@@ -285,15 +333,15 @@ const APPOINTMENTS = [
 
   // --- Past: no-shows. Without these the no-show rate reads 0% ------------
   {
-    patient: 'jordan', doctor: 'jdiaz', week: -6, day: FRI, time: '15:30',
+    patient: 'jordan', doctor: 'jdiaz', week: -1, day: FRI, time: '15:30',
     reason: 'Mole check', status: 'no_show', cancelReason: 'Did not attend, no contact',
   },
   {
-    patient: 'kevin', doctor: 'lbennett', week: -4, day: TUE, time: '14:30',
+    patient: 'kevin', doctor: 'lbennett', week: -1, day: TUE, time: '14:30',
     reason: 'Sports physical', status: 'no_show', cancelReason: 'Arrived too late to be seen',
   },
   {
-    patient: 'marcus', doctor: 'rosei', week: -3, day: THU, time: '11:00',
+    patient: 'marcus', doctor: 'rosei', week: -1, day: THU, time: '11:00',
     reason: 'Cardiology review', status: 'no_show', cancelReason: 'Patient called after the fact',
   },
   {
@@ -303,23 +351,23 @@ const APPOINTMENTS = [
 
   // --- Past: cancellations from both sides, with the reasons the UI offers -
   {
-    patient: 'john', doctor: 'dkim', week: -7, day: THU, time: '10:00',
+    patient: 'john', doctor: 'dkim', week: -1, day: THU, time: '10:00',
     reason: 'Headache consultation', status: 'cancelled',
     cancelReason: 'Schedule conflict', cancelledBy: 'patient',
   },
   {
-    patient: 'lucia', doctor: 'jdiaz', week: -5, day: FRI, time: '09:30',
+    patient: 'lucia', doctor: 'jdiaz', week: -1, day: FRI, time: '09:30',
     reason: 'Acne treatment review', status: 'cancelled',
     cancelReason: 'Feeling better / no longer needed', cancelledBy: 'patient',
   },
   {
-    patient: 'anita', doctor: 'lbennett', week: -3, day: MON, time: '13:00',
+    patient: 'anita', doctor: 'lbennett', week: -1, day: MON, time: '13:00',
     reason: 'Medication review', status: 'cancelled',
     cancelReason: 'Provider unavailable', cancelledBy: 'practice',
   },
   {
     key: 'knee-bumped',
-    patient: 'marcus', doctor: 'erossi', week: -2, day: FRI, time: '14:00',
+    patient: 'marcus', doctor: 'erossi', week: -1, day: FRI, time: '14:00',
     reason: 'Knee assessment', status: 'cancelled',
     cancelReason: 'Clinic closure', cancelledBy: 'practice',
   },
@@ -332,73 +380,80 @@ const APPOINTMENTS = [
   // --- Imminent: the patient dashboard and today's clinic list need these --
   {
     key: 'checkup-soon',
-    patient: 'john', doctor: 'skim', ahead: 1, time: '11:30',
+    patient: 'john', doctor: 'skim', week: 0, day: MON, time: '11:30',
     reason: 'Blood pressure check', status: 'confirmed',
   },
   {
-    patient: 'marcus', doctor: 'rosei', ahead: 1, time: '14:00',
+    patient: 'marcus', doctor: 'rosei', week: 0, day: MON, time: '14:00',
     reason: 'Statin review', status: 'confirmed',
   },
 
   // --- Upcoming: awaiting approval. The admin demo lives on these ----------
   {
     key: 'bp-check',
-    patient: 'john', doctor: 'rosei', week: 1, day: MON, time: '09:30',
+    patient: 'john', doctor: 'rosei', week: 0, day: TUE, time: '09:30',
     reason: 'Blood pressure check', status: 'pending',
   },
   {
-    patient: 'marcus', doctor: 'erossi', week: 1, day: WED, time: '11:00',
+    patient: 'marcus', doctor: 'erossi', week: 0, day: WED, time: '11:00',
     reason: 'Shoulder physiotherapy review', status: 'pending',
   },
   {
     key: 'flu-moved',
-    patient: 'jordan', doctor: 'skim', week: 2, day: TUE, time: '10:30',
+    patient: 'jordan', doctor: 'skim', week: 0, day: WED, time: '10:30',
     reason: 'Flu shot', status: 'pending', rescheduledFrom: 'flu-original',
   },
   {
-    patient: 'lucia', doctor: 'jdiaz', week: 2, day: THU, time: '14:30',
+    patient: 'lucia', doctor: 'jdiaz', week: 0, day: WED, time: '14:30',
     reason: 'Annual skin check', status: 'pending',
   },
   {
-    patient: 'kevin', doctor: 'apatel', week: 2, day: WED, time: '09:30',
+    patient: 'kevin', doctor: 'apatel', week: 0, day: WED, time: '09:30',
     reason: 'Asthma review', status: 'pending',
   },
   {
-    patient: 'anita', doctor: 'rosei', week: 3, day: TUE, time: '13:30',
+    patient: 'anita', doctor: 'rosei', week: 0, day: TUE, time: '13:30',
     reason: 'Cholesterol follow-up', status: 'pending',
   },
   {
-    patient: 'john', doctor: 'dkim', week: 3, day: THU, time: '10:00',
+    patient: 'john', doctor: 'dkim', week: 0, day: WED, time: '10:00',
     reason: 'Neurology consultation', status: 'pending',
   },
 
   // --- Upcoming: approved -------------------------------------------------
   {
     key: 'physical-upcoming',
-    patient: 'john', doctor: 'skim', week: 1, day: FRI, time: '09:00',
+    patient: 'john', doctor: 'skim', week: 0, day: TUE, time: '09:00',
     reason: 'Annual physical', status: 'confirmed',
   },
   {
-    patient: 'jordan', doctor: 'dkim', week: 1, day: TUE, time: '13:30',
+    patient: 'jordan', doctor: 'dkim', week: 0, day: TUE, time: '13:30',
     reason: 'Migraine follow-up', status: 'confirmed',
   },
   {
-    patient: 'kevin', doctor: 'lbennett', week: 1, day: WED, time: '14:00',
+    patient: 'kevin', doctor: 'lbennett', week: 0, day: WED, time: '14:00',
     reason: 'Sports physical', status: 'confirmed',
   },
   {
     // Falls inside Dr. Rossi's conference block below, so it demos the
     // "needs rescheduling" callout without anyone setting it up first.
     key: 'ankle-recheck',
-    patient: 'lucia', doctor: 'erossi', week: 2, day: MON, time: '15:30',
+    patient: 'lucia', doctor: 'erossi', week: 0, day: WED, time: '15:30',
     reason: 'Ankle re-check', status: 'confirmed',
   },
   {
-    patient: 'marcus', doctor: 'rosei', week: 2, day: THU, time: '09:00',
+    // Also inside Dr. Rossi's block, and belonging to the demo patient, so the
+    // "needs rescheduling" callout is the first thing on their dashboard.
+    key: 'knee-recheck',
+    patient: 'john', doctor: 'erossi', week: 0, day: WED, time: '13:00',
+    reason: 'Knee follow-up', status: 'confirmed',
+  },
+  {
+    patient: 'marcus', doctor: 'rosei', week: 0, day: WED, time: '09:00',
     reason: 'Echocardiogram results', status: 'confirmed',
   },
   {
-    patient: 'anita', doctor: 'lbennett', week: 3, day: FRI, time: '11:00',
+    patient: 'anita', doctor: 'lbennett', week: 0, day: TUE, time: '11:00',
     reason: 'Diabetes review', status: 'confirmed',
   },
 
@@ -407,12 +462,12 @@ const APPOINTMENTS = [
     // The row 'flu-moved' above replaced: cancelled by the patient with the
     // reason the reschedule endpoint writes.
     key: 'flu-original',
-    patient: 'jordan', doctor: 'skim', week: 1, day: TUE, time: '10:30',
+    patient: 'jordan', doctor: 'skim', week: 0, day: TUE, time: '10:30',
     reason: 'Flu shot', status: 'cancelled',
     cancelReason: 'Rescheduled to another time', cancelledBy: 'patient',
   },
   {
-    patient: 'lucia', doctor: 'erossi', week: 1, day: THU, time: '15:00',
+    patient: 'lucia', doctor: 'erossi', week: 0, day: TUE, time: '15:00',
     reason: 'Physiotherapy referral', status: 'cancelled',
     cancelReason: 'Rescheduled at patient request', cancelledBy: 'practice',
   },
@@ -424,6 +479,23 @@ const PRESCRIPTIONS = [
     medication: 'Lisinopril', dosage: '10 mg', frequency: 'once daily', duration: 'ongoing',
     instructions: 'Take in the morning. Report a persistent dry cough.',
     allowed: 3, used: 1, status: 'active',
+  },
+  {
+    // Deliberately left with no open request: this is the prescription the
+    // demo patient asks to refill on screen, and it belongs to Dr. Kim, so the
+    // request lands in the physician queue shown in the same walkthrough.
+    key: 'atorvastatin', patient: 'john', doctor: 'skim',
+    medication: 'Atorvastatin', dosage: '20 mg', frequency: 'once daily at night',
+    duration: 'ongoing',
+    instructions: 'Take in the evening. Report any unexplained muscle aches.',
+    allowed: 3, used: 0, status: 'active',
+  },
+  {
+    // Carries a pending request so Dr. Kim's refill queue is not empty on load.
+    key: 'cetirizine', patient: 'jordan', doctor: 'skim',
+    medication: 'Cetirizine', dosage: '10 mg', frequency: 'once daily', duration: 'seasonal',
+    instructions: 'May cause drowsiness. Take at night if it affects you.',
+    allowed: 4, used: 1, status: 'active',
   },
   {
     key: 'sumatriptan', patient: 'jordan', doctor: 'dkim', appt: 'migraine',
@@ -463,6 +535,10 @@ const REFILL_REQUESTS = [
   {
     prescription: 'lisinopril', patient: 'john', status: 'pending', daysAgo: 2,
     note: 'Down to my last week of tablets.',
+  },
+  {
+    prescription: 'cetirizine', patient: 'jordan', status: 'pending', daysAgo: 1,
+    note: 'Allergies started early this year — could I get another month?',
   },
   {
     prescription: 'sumatriptan', patient: 'jordan', status: 'pending', daysAgo: 1,
@@ -511,6 +587,11 @@ const NOTIFICATIONS = [
     user: 'jordan', appt: 'flu-moved', type: 'appointment_rescheduled', hoursAgo: 20, read: false,
     title: 'Appointment moved',
     body: 'Your flu shot has been moved. The new time is waiting for the clinic to approve it.',
+  },
+  {
+    user: 'john', appt: 'knee-recheck', type: 'reschedule_required', hoursAgo: 3, read: false,
+    title: 'Please reschedule your visit',
+    body: 'Dr. Elena Rossi is away on the day of your knee follow-up. Pick a new time from My Appointments.',
   },
   {
     user: 'lucia', appt: 'ankle-recheck', type: 'reschedule_required', hoursAgo: 4, read: false,
@@ -596,13 +677,31 @@ function placeAppointments() {
 // The filler below books the remaining slots up to a per-physician target. The
 // targets differ on purpose — a utilization table where every row reads the same
 // tells an administrator nothing about how to move work between providers.
+// Targets stay well short of full so there are open slots left to book into
+// during a live demonstration. A fully booked physician has nothing to show.
 const FILL_TARGET = {
-  skim: 0.86, rosei: 0.78, jdiaz: 0.63, apatel: 0.71,
-  erossi: 0.68, dkim: 0.59, lbennett: 0.74,
+  skim: 0.72, rosei: 0.66, jdiaz: 0.48, apatel: 0.57,
+  erossi: 0.54, dkim: 0.44, lbennett: 0.61,
 };
 
-const FILL_WEEKS_BACK = 3;
-const FILL_WEEKS_AHEAD = 2;
+// The demo window: last Monday through the Wednesday of the current week.
+// Week -1 is wholly in the past; week 0 stops at Wednesday so the book ends on
+// the evening of the demonstration date rather than trailing off into a future
+// nobody will look at.
+const FILL_WINDOW = [
+  { week: -1, days: [MON, TUE, WED, THU, FRI] },
+  { week: 0, days: [MON, TUE, WED] },
+];
+
+// Dr. Rossi is away on the Wednesday. Declared here as well as inserted below
+// so the filler does not book slots the availability block removes.
+const BLOCK = {
+  doctor: 'erossi',
+  week: 0,
+  startDay: WED,
+  endDay: WED,
+  reason: 'Attending the national orthopedic conference',
+};
 
 const FILL_REASONS = [
   'Annual physical', 'Follow-up visit', 'Blood pressure check', 'Medication review',
@@ -668,7 +767,10 @@ function daySlots() {
  */
 function fillSchedule(placed) {
   const sites = Object.fromEntries(DOCTORS.map((d) => [d.key, siteByWeekday(d)]));
-  const patientKeys = PATIENTS.map((p) => p.key);
+  // Bulk volume goes to the background population. The named patients hold only
+  // the curated visits above, so opening one of their records during a demo
+  // shows a book a real person could have rather than a wall of rows.
+  const patientKeys = BACKGROUND_PATIENTS.map((p) => p.key);
   const slots = daySlots();
   const today = isoDate(new Date());
 
@@ -677,15 +779,23 @@ function fillSchedule(placed) {
     placed.filter((a) => a.status !== 'cancelled').map((a) => `${a.doctor} ${a.date} ${a.time}`)
   );
 
+  // Days the availability block removes: booking into them would contradict
+  // what the patient-facing availability search returns.
+  const blocked = new Set();
+  for (let d = BLOCK.startDay; d <= BLOCK.endDay; d += 1) {
+    blocked.add(`${BLOCK.doctor} ${isoDate(weekdayDate(BLOCK.week, d))}`);
+  }
+
   const extra = [];
   for (const doctor of DOCTORS) {
     const target = FILL_TARGET[doctor.key] ?? 0.7;
 
-    for (let w = -FILL_WEEKS_BACK; w <= FILL_WEEKS_AHEAD; w += 1) {
-      for (const weekday of [MON, TUE, WED, THU, FRI]) {
+    for (const { week: w, days } of FILL_WINDOW) {
+      for (const weekday of days) {
         const site = sites[doctor.key][weekday];
         if (!site) continue;
         const date = isoDate(weekdayDate(w, weekday));
+        if (blocked.has(`${doctor.key} ${date}`)) continue;
 
         for (const time of slots) {
           const slot = `${doctor.key} ${date} ${time}`;
@@ -755,14 +865,27 @@ function fillSchedule(placed) {
 // ---------------------------------------------------------------------------
 // Seeding
 // ---------------------------------------------------------------------------
+/**
+ * Drop every table in the public schema, then let the schema be re-applied.
+ *
+ * A TRUNCATE would be enough to clear rows, but not to change shape: tables
+ * left over from an earlier version of the schema keep their old columns, and
+ * `CREATE TABLE IF NOT EXISTS` will not alter them. Dropping is what makes a
+ * reset also a restructure. The table list is read from the catalogue rather
+ * than hard-coded so tables this version of the code has never heard of — an
+ * older schema's, or a migration ledger — are removed too.
+ */
 async function wipe() {
-  await db.query(`
-    TRUNCATE notifications, refill_requests, prescriptions, appointments,
-             schedule_blocks, doctor_schedules, doctors, specialties,
-             patients, locations, users
-    RESTART IDENTITY CASCADE
-  `);
-  console.log('• Existing data wiped.');
+  const rows = await db.query(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`
+  );
+  if (rows.length === 0) {
+    console.log('• Database is already empty.');
+    return;
+  }
+  const names = rows.map((r) => `"${r.tablename}"`).join(', ');
+  await db.query(`DROP TABLE IF EXISTS ${names} CASCADE`);
+  console.log(`• Dropped ${rows.length} existing tables.`);
 }
 
 async function alreadySeeded() {
@@ -908,12 +1031,12 @@ async function seed(placed) {
     // Dr. Rossi is away for three days in a fortnight. Flagging the bookings
     // caught inside it is the same statement the admin block endpoint runs, so
     // the "needs rescheduling" callout is live on a fresh database.
-    const blockStart = isoDate(weekdayDate(2, MON));
-    const blockEnd = isoDate(weekdayDate(2, WED));
+    const blockStart = isoDate(weekdayDate(BLOCK.week, BLOCK.startDay));
+    const blockEnd = isoDate(weekdayDate(BLOCK.week, BLOCK.endDay));
     await q(
       `INSERT INTO schedule_blocks (doctor_id, start_date, end_date, reason, created_by)
-       VALUES ($1, $2, $3, 'Attending the national orthopedic conference', $4)`,
-      [doctorId.erossi, blockStart, blockEnd, adminId]
+       VALUES ($1, $2, $3, $4, $5)`,
+      [doctorId[BLOCK.doctor], blockStart, blockEnd, BLOCK.reason, adminId]
     );
     await q(
       `UPDATE appointments
@@ -921,7 +1044,7 @@ async function seed(placed) {
         WHERE doctor_id = $1
           AND appt_date BETWEEN $2 AND $3
           AND status IN ('pending', 'confirmed')`,
-      [doctorId.erossi, blockStart, blockEnd]
+      [doctorId[BLOCK.doctor], blockStart, blockEnd]
     );
 
     // --- Prescriptions -------------------------------------------------------
@@ -989,10 +1112,11 @@ async function main() {
   const curated = placeAppointments();
   // Curated rows first: the filler books around whatever they already claimed.
   const placed = curated.concat(fillSchedule(curated));
+  // On a reset the tables are dropped first and rebuilt from schema.sql, so the
+  // shape is refreshed as well as the rows.
+  if (RESET) await wipe();
   await db.init();
-  if (RESET) {
-    await wipe();
-  } else if (await alreadySeeded()) {
+  if (!RESET && await alreadySeeded()) {
     console.log('Database already has data — skipping seed. Use "npm run reset-db" to force.');
     return;
   }
