@@ -4,21 +4,23 @@
  * The order of this page is the design. A visit the clinic has disrupted is the
  * only thing here the patient *must* act on, so it sits above everything else.
  * Their scheduled appointments come next — that is what someone opens this app
- * to see. The counts are context, so they come last: a number can wait, a
- * cancelled Tuesday cannot.
+ * to see, and it is where the page ends.
+ *
+ * There is deliberately no row of counts. A patient has five appointments, not
+ * five hundred: "Upcoming 2" is a tile that restates the list directly beneath
+ * it, and a metric nobody can act on is furniture in front of the thing they
+ * came for. Volume is a clinic's problem, and the clinic has its own console.
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  AlertTriangle, CalendarCheck, CalendarClock, CalendarPlus, Hourglass, MapPin,
-} from 'lucide-react';
+import { AlertTriangle, CalendarClock, CalendarPlus, MapPin } from 'lucide-react';
 import {
   formatDate, formatTime, getUser, isOpen, listMyAppointments, todayStr,
   type Appointment,
 } from '../../lib/api';
 import {
   Alert, Avatar, Card, EmptyState, PageHeader, RescheduleBadge, Spinner,
-  StatCard, StatusBadge, buttonClasses,
+  StatusBadge, buttonClasses,
 } from '../../components/ui';
 
 /** Chronological, since both the panel and the callout read as an agenda. */
@@ -72,8 +74,6 @@ export default function Dashboard() {
   // "Upcoming" is every live booking still ahead of the patient, approved or
   // not: a request the clinic has yet to accept is still a plan they have made.
   const upcoming = all.filter((a) => isOpen(a.status) && a.appt_date >= today).sort(byWhen);
-  const pending = all.filter((a) => a.status === 'pending');
-  const completed = all.filter((a) => a.status === 'completed');
   const disrupted = upcoming.filter((a) => a.reschedule_required);
 
   return (
@@ -143,7 +143,6 @@ export default function Dashboard() {
             View all
           </Link>
         }
-        className="mb-6"
       >
         {!appointments && !error && <Spinner />}
         {appointments && upcoming.length === 0 && (
@@ -160,34 +159,29 @@ export default function Dashboard() {
           </EmptyState>
         )}
         {upcoming.length > 0 && (
-          <ul>
-            {upcoming.map((a) => (
-              <VisitRow key={a.id} appointment={a} />
-            ))}
-          </ul>
+          <>
+            <ul>
+              {upcoming.map((a) => (
+                <VisitRow key={a.id} appointment={a} />
+              ))}
+            </ul>
+            {/* The list is now the last thing on the page, so it has to say
+                where it stops: everything above is what is still ahead, and a
+                patient looking for a visit they have already had should be told
+                which page holds it rather than left wondering if it is gone. */}
+            <p className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-500">
+              That's everything ahead of you. Past and cancelled visits are on{' '}
+              <Link
+                to="/app/appointments"
+                className="font-semibold text-accent-700 hover:underline"
+              >
+                My appointments
+              </Link>
+              .
+            </p>
+          </>
         )}
       </Card>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Upcoming"
-          value={appointments ? upcoming.length : '–'}
-          icon={CalendarClock}
-          accent
-          hint="Confirmed and awaiting approval"
-        />
-        <StatCard
-          label="Pending approval"
-          value={appointments ? pending.length : '–'}
-          icon={Hourglass}
-          hint="The clinic is reviewing these"
-        />
-        <StatCard
-          label="Completed visits"
-          value={appointments ? completed.length : '–'}
-          icon={CalendarCheck}
-        />
-      </div>
     </>
   );
 }

@@ -413,7 +413,10 @@ export default function Layout() {
         {/* The white panel. Equal margin on all four sides, full height of the
             shell, and its own scrollbar so the sidebar stays put. */}
         <main className="flex-1 bg-white md:m-3 md:min-h-0 md:overflow-y-auto md:rounded-xl">
-          <div className="mx-auto w-full max-w-content px-4 pb-28 pt-6 sm:px-6 md:pb-12 lg:px-8">
+          {/* Gutters are deliberately tighter than the usual 4/6/8 step: the
+              clinic tables are wide, and every rem spent on whitespace here is
+              a rem the action column does not have. */}
+          <div className="mx-auto w-full max-w-content px-3.5 pb-28 pt-6 sm:px-5 md:pb-12 lg:px-7">
             <Outlet />
           </div>
         </main>

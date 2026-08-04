@@ -1,0 +1,184 @@
+- generic [ref=e34]:
+  - complementary [ref=e35]:
+    - generic [ref=e36]:
+      - link "MediSync" [ref=e37] [cursor=pointer]:
+        - /url: /admin
+      - generic [ref=e39]:
+        - button "Notifications (1 unread)" [ref=e40] [cursor=pointer]
+        - generic: "1"
+    - navigation "Main" [ref=e44]:
+      - generic [ref=e45]:
+        - generic [ref=e46]: Clinic
+        - link "Overview" [ref=e47] [cursor=pointer]:
+          - /url: /admin
+        - link "Appointments" [ref=e53] [cursor=pointer]:
+          - /url: /admin/appointments
+        - link "Reports" [ref=e56] [cursor=pointer]:
+          - /url: /admin/reports
+      - generic [ref=e59]:
+        - generic [ref=e60]: Setup
+        - link "Physicians" [ref=e61] [cursor=pointer]:
+          - /url: /admin/doctors
+        - link "Schedules" [ref=e66] [cursor=pointer]:
+          - /url: /admin/schedules
+        - link "Locations" [ref=e69] [cursor=pointer]:
+          - /url: /admin/locations
+        - link "Specialties" [ref=e73] [cursor=pointer]:
+          - /url: /admin/specialties
+    - generic [ref=e78]:
+      - generic [ref=e79]:
+        - generic [ref=e80]: CA
+        - generic [ref=e81]:
+          - generic [ref=e82]: Clinic Administrator
+          - generic [ref=e83]: Administrator
+      - button "Log out" [ref=e84] [cursor=pointer]
+  - main [ref=e89]:
+    - generic [ref=e91]:
+      - generic [ref=e94]:
+        - heading "Clinic overview" [level=1] [ref=e95]
+        - paragraph [ref=e96]: How the book is running, across every site, physician and patient.
+      - generic [ref=e97]:
+        - generic [ref=e99]:
+          - generic [ref=e100]: "462"
+          - generic [ref=e101]: Total appointments
+        - generic [ref=e105]:
+          - generic [ref=e106]: 5.6%
+          - generic [ref=e107]: No-show rate
+          - generic [ref=e108]: Of appointments that came due
+        - generic [ref=e115]:
+          - generic [ref=e116]: 10.8%
+          - generic [ref=e117]: Cancellation rate
+        - link "15 Pending approval Open the approval queue" [ref=e122] [cursor=pointer]:
+          - /url: /admin/appointments?status=pending
+          - generic [ref=e124]:
+            - generic [ref=e125]: "15"
+            - generic [ref=e126]: Pending approval
+            - generic [ref=e127]: Open the approval queue
+      - generic [ref=e132]:
+        - generic [ref=e134]:
+          - generic [ref=e135]: "46"
+          - generic [ref=e136]: Registered patients
+        - generic [ref=e143]:
+          - generic [ref=e144]: "7"
+          - generic [ref=e145]: Active physicians
+      - generic [ref=e150]:
+        - generic [ref=e151]:
+          - heading "Appointments by status" [level=2] [ref=e153]
+          - generic [ref=e155]:
+            - generic [ref=e156]: Pending
+            - generic [ref=e157]: "15"
+          - generic [ref=e161]:
+            - generic [ref=e162]: Confirmed
+            - generic [ref=e163]: "74"
+          - generic [ref=e167]:
+            - generic [ref=e168]: Completed
+            - generic [ref=e169]: "305"
+          - generic [ref=e173]:
+            - generic [ref=e174]: Cancelled
+            - generic [ref=e175]: "50"
+          - generic [ref=e179]:
+            - generic [ref=e180]: Didn't attend
+            - generic [ref=e181]: "18"
+        - generic [ref=e184]:
+          - heading "Volume by specialty" [level=2] [ref=e186]
+          - generic [ref=e188]:
+            - generic [ref=e189]: Family Medicine
+            - generic [ref=e190]: "154"
+          - generic [ref=e194]:
+            - generic [ref=e195]: Cardiology
+            - generic [ref=e196]: "75"
+          - generic [ref=e200]:
+            - generic [ref=e201]: Pediatrics
+            - generic [ref=e202]: "63"
+          - generic [ref=e206]:
+            - generic [ref=e207]: Orthopedics
+            - generic [ref=e208]: "62"
+          - generic [ref=e212]:
+            - generic [ref=e213]: Dermatology
+            - generic [ref=e214]: "61"
+          - generic [ref=e218]:
+            - generic [ref=e219]: Neurology
+            - generic [ref=e220]: "47"
+      - generic [ref=e223]:
+        - heading "Physician utilization" [level=2] [ref=e225]
+        - table [ref=e227]:
+          - rowgroup [ref=e228]:
+            - row [ref=e229]:
+              - columnheader "Physician" [ref=e230]
+              - columnheader "Specialty" [ref=e231]
+              - columnheader "Total" [ref=e232]
+              - columnheader "Upcoming" [ref=e233]
+              - columnheader "Completed" [ref=e234]
+              - columnheader "Cancelled" [ref=e235]
+              - columnheader "Didn't attend" [ref=e236]
+          - rowgroup [ref=e237]:
+            - row [ref=e238]:
+              - cell [ref=e239]:
+                - link "Dr. Sarah Kim" [ref=e240] [cursor=pointer]:
+                  - /url: /admin/physicians/1
+              - cell "Family Medicine" [ref=e241]
+              - cell "81" [ref=e242]
+              - cell "18" [ref=e243]
+              - cell "52" [ref=e244]
+              - cell "7" [ref=e245]
+              - cell "4" [ref=e246]
+            - row [ref=e247]:
+              - cell [ref=e248]:
+                - link "Dr. Robert Osei" [ref=e249] [cursor=pointer]:
+                  - /url: /admin/physicians/2
+              - cell "Cardiology" [ref=e250]
+              - cell "75" [ref=e251]
+              - cell "17" [ref=e252]
+              - cell "41" [ref=e253]
+              - cell "13" [ref=e254]
+              - cell "4" [ref=e255]
+            - row [ref=e256]:
+              - cell [ref=e257]:
+                - link "Dr. Laura Bennett" [ref=e258] [cursor=pointer]:
+                  - /url: /admin/physicians/7
+              - cell "Family Medicine" [ref=e259]
+              - cell "73" [ref=e260]
+              - cell "14" [ref=e261]
+              - cell "49" [ref=e262]
+              - cell "7" [ref=e263]
+              - cell "3" [ref=e264]
+            - row [ref=e265]:
+              - cell [ref=e266]:
+                - link "Dr. Aisha Patel" [ref=e267] [cursor=pointer]:
+                  - /url: /admin/physicians/4
+              - cell "Pediatrics" [ref=e268]
+              - cell "63" [ref=e269]
+              - cell "15" [ref=e270]
+              - cell "40" [ref=e271]
+              - cell "6" [ref=e272]
+              - cell "2" [ref=e273]
+            - row [ref=e274]:
+              - cell [ref=e275]:
+                - link "Dr. Elena Rossi" [ref=e276] [cursor=pointer]:
+                  - /url: /admin/physicians/5
+              - cell "Orthopedics" [ref=e277]
+              - cell "62" [ref=e278]
+              - cell "7" [ref=e279]
+              - cell "46" [ref=e280]
+              - cell "8" [ref=e281]
+              - cell "1" [ref=e282]
+            - row [ref=e283]:
+              - cell [ref=e284]:
+                - link "Dr. Julia Diaz" [ref=e285] [cursor=pointer]:
+                  - /url: /admin/physicians/3
+              - cell "Dermatology" [ref=e286]
+              - cell "61" [ref=e287]
+              - cell "10" [ref=e288]
+              - cell "44" [ref=e289]
+              - cell "4" [ref=e290]
+              - cell "3" [ref=e291]
+            - row [ref=e292]:
+              - cell [ref=e293]:
+                - link "Dr. David Kim" [ref=e294] [cursor=pointer]:
+                  - /url: /admin/physicians/6
+              - cell "Neurology" [ref=e295]
+              - cell "47" [ref=e296]
+              - cell "8" [ref=e297]
+              - cell "33" [ref=e298]
+              - cell "5" [ref=e299]
+              - cell "1" [ref=e300]

@@ -686,7 +686,10 @@ interface StatCardProps {
 
 export function StatCard({ label, value, icon: Icon, accent, hint }: StatCardProps) {
   return (
-    <div className="card flex items-start justify-between gap-3">
+    // h-full so a card in a grid row matches its neighbours whatever their
+    // content: one card carrying a hint line must not stand shorter than the
+    // rest of the row.
+    <div className="card flex h-full items-start justify-between gap-3">
       <div className="min-w-0">
         <div
           className={cx(
@@ -917,6 +920,56 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   size?: 'sm' | 'md' | 'lg';
+}
+
+/**
+ * A cell of free text that might be a phrase or might be a paragraph.
+ *
+ * Patient-written reasons have no length limit, and one long one drags a table
+ * row several lines tall and pushes every other column out of shape. So the
+ * cell shows a fixed amount and opens the rest in a dialog on click — the row
+ * keeps its height, and nothing is hidden from the reader who wants it.
+ *
+ * Truncation is on characters rather than a CSS line clamp because the row
+ * height has to be predictable across columns of different widths.
+ */
+export function TruncatedText({
+  text, limit = 60, title = 'Full text', className,
+}: {
+  text?: string | null;
+  limit?: number;
+  title?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const value = (text || '').trim();
+
+  if (!value) return <span className="text-slate-400">—</span>;
+  if (value.length <= limit) return <span className={className}>{value}</span>;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Show the full text"
+        className={cx(
+          'text-left underline decoration-slate-300 underline-offset-2 hover:decoration-slate-500',
+          className
+        )}
+      >
+        {value.slice(0, limit).trimEnd()}…
+      </button>
+      <Modal
+        open={open}
+        title={title}
+        onClose={() => setOpen(false)}
+        footer={<Button onClick={() => setOpen(false)}>Close</Button>}
+      >
+        <p className="whitespace-pre-wrap text-sm text-slate-700">{value}</p>
+      </Modal>
+    </>
+  );
 }
 
 export function Modal({ open, title, onClose, children, footer, size = 'md' }: ModalProps) {

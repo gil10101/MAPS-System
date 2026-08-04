@@ -1148,6 +1148,24 @@ export function adminSetAppointmentStatus(
   });
 }
 
+/**
+ * Move a booking to a new slot on the patient's behalf.
+ *
+ * Supersedes the original rather than editing it, so the replacement re-enters
+ * the approval queue as `pending` and the Cancellation report can still show
+ * that a booking existed on the old date and moved.
+ */
+export function adminRescheduleAppointment(
+  id: number | string,
+  appt_date: string,
+  appt_time: string
+): Promise<{ appointment: Appointment }> {
+  return api<{ appointment: Appointment }>(`/admin/appointments/${id}/reschedule`, {
+    method: 'PATCH',
+    body: { appt_date, appt_time },
+  });
+}
+
 export function adminSaveAppointmentNote(
   id: number | string,
   notes: string

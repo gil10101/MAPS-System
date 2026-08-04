@@ -14,7 +14,9 @@ const db = require('../db/database');
 const wrap = require('../utils/wrap');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { notify } = require('../services/notify');
-const { toMinutes, countSlotsInRange } = require('../utils/slots');
+const {
+  toMinutes, countSlotsInRange, isSlotAvailable, resolveSlotLocation,
+} = require('../utils/slots');
 // "Booked" has one definition in this system and it lives with the reports.
 // Re-declaring it here is how a profile page and the Provider Utilization
 // report end up quoting different numbers for the same physician.
@@ -62,6 +64,19 @@ function isHHMM(value) {
 function isDateStr(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   return !Number.isNaN(new Date(`${value}T12:00:00`).getTime());
+}
+
+/** Slot start times are stored as 'HH:MM' strings, so they validate as text. */
+function isTimeStr(value) {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+/** Today in the clinic's own timezone — a UTC round-trip would shift the day. */
+function todayStr() {
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -926,6 +941,125 @@ router.patch(
     if (!updated) return res.status(404).json({ error: 'Appointment not found.' });
 
     res.json({ appointment: await db.one(`${ADMIN_APPT_SELECT} WHERE a.id = $1`, [updated.id]) });
+  })
+);
+
+/**
+ * PATCH /api/admin/appointments/:id/reschedule — move a booking to a new slot.
+ * Body: { appt_date, appt_time }
+ *
+ * The front desk moves appointments on the patient's behalf all day: somebody
+ * rings, cannot make Thursday, and the person answering should be able to fix
+ * it while they are still on the line rather than cancelling and asking them to
+ * rebook online.
+ *
+ * Mechanically identical to the patient's own reschedule, and deliberately so —
+ * the original row is superseded rather than edited, the replacement re-enters
+ * the queue as `pending`, and `rescheduled_from_id` links the pair. The one
+ * difference is attribution: `cancelled_by` records the practice, because the
+ * Cancellation report should not show a clinic-initiated move as the patient
+ * changing their mind.
+ */
+router.patch(
+  '/appointments/:id/reschedule',
+  wrap(async (req, res) => {
+    const appt = await db.one(
+      `SELECT a.id, a.patient_id, a.doctor_id, a.appt_date, a.appt_time, a.reason, a.status,
+              p.user_id AS patient_user_id
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       WHERE a.id = $1`,
+      [req.params.id]
+    );
+    if (!appt) return res.status(404).json({ error: 'Appointment not found.' });
+
+    if (!['pending', 'confirmed'].includes(appt.status)) {
+      return res.status(409).json({
+        error: `Only an upcoming appointment can be rescheduled — this one is ${
+          STATUS_PROSE[appt.status] || appt.status
+        }.`,
+      });
+    }
+
+    const { appt_date: date, appt_time: time } = req.body || {};
+    if (!isDateStr(date) || !isTimeStr(time)) {
+      return res.status(400).json({ error: 'A new date and time are required.' });
+    }
+    if (date < todayStr()) {
+      return res.status(400).json({ error: 'Cannot move an appointment to a date in the past.' });
+    }
+    // The slot would otherwise read as taken by this very appointment.
+    if (date === appt.appt_date && time === appt.appt_time) {
+      return res.status(400).json({ error: 'That is the time this appointment already has.' });
+    }
+    if (!(await isSlotAvailable(appt.doctor_id, date, time))) {
+      return res.status(409).json({ error: 'That time is no longer open. Pick another slot.' });
+    }
+
+    const locationId = await resolveSlotLocation(appt.doctor_id, date, time);
+
+    let createdId;
+    try {
+      createdId = await db.tx(async (client) => {
+        // Insert before cancelling: the replacement has to clear the
+        // double-book index while the original still holds its slot, so a
+        // collision fails before the patient has given up the time they have.
+        const inserted = await client.query(
+          `INSERT INTO appointments
+             (patient_id, doctor_id, location_id, appt_date, appt_time, reason,
+              status, rescheduled_from_id, reschedule_required)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, false)
+           RETURNING id`,
+          [appt.patient_id, appt.doctor_id, locationId, date, time, appt.reason, appt.id]
+        );
+
+        const superseded = await client.query(
+          // The reason is settable because the front desk moves a booking for
+          // more than one kind of reason, and the Cancellation report reads
+          // this column: recording every clinic-initiated move as "at patient
+          // request" would hide the ones the practice caused itself. It
+          // defaults to the patient's request because that is the ordinary
+          // case — somebody rang and asked.
+          `UPDATE appointments
+              SET status = 'cancelled', cancelled_by = 'practice',
+                  cancel_reason = $2,
+                  cancelled_at = now(), reschedule_required = false, updated_at = now()
+            WHERE id = $1 AND status IN ('pending', 'confirmed')`,
+          [appt.id, text(req.body?.reason) || 'Rescheduled at patient request']
+        );
+        if (superseded.rowCount === 0) {
+          const conflict = new Error('That appointment changed while you were rescheduling it.');
+          conflict.status = 409;
+          throw conflict;
+        }
+
+        return inserted.rows[0].id;
+      });
+    } catch (err) {
+      if (err.status === 409) return res.status(409).json({ error: err.message });
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That time was just taken. Pick another slot.' });
+      }
+      throw err;
+    }
+
+    const created = await db.one(`${ADMIN_APPT_SELECT} WHERE a.id = $1`, [createdId]);
+
+    await notify({
+      userId: appt.patient_user_id,
+      appointmentId: created.id,
+      type: 'appointment_rescheduled',
+      ctx: {
+        doctorName: created.doctor_name,
+        apptDate: created.appt_date,
+        apptTime: created.appt_time,
+        locationName: created.location_name,
+        previousDate: appt.appt_date,
+        previousTime: appt.appt_time,
+      },
+    });
+
+    res.json({ appointment: created });
   })
 );
 

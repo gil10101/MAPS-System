@@ -42,8 +42,9 @@ export default {
       },
       maxWidth: {
         // Measure of the white content panel. Wider than this and table rows
-        // become hard to track across.
-        content: '68.75rem',
+        // become hard to track across — but the operational tables carry seven
+        // columns and an action, so the gutter is kept tight to give them room.
+        content: '75.625rem',
       },
       keyframes: {
         'fade-in': {

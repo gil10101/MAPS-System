@@ -116,7 +116,7 @@ export default function Overview() {
         />
         <Link
           to="/admin/appointments?status=pending"
-          className="block rounded-xl transition hover:ring-2 hover:ring-accent-600"
+          className="group block h-full rounded-xl transition [&>*]:hover:border-slate-300 [&>*]:hover:shadow-md"
         >
           <StatCard
             label="Pending approval"
