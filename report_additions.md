@@ -20,13 +20,13 @@ affected headings are called out where that happens.
 | 2 | Level 0 diagram — the reminder service | p. 8, §2.2 | Adds a clarifying paragraph |
 | 3 | Physician Availability and Slot Generation | p. 10, after Figure 3 | **New §2.3** (old 2.3 → 2.4, old 2.4 → 2.5) |
 | 4 | Menu Hierarchy | p. 10–11, §2.3 (renumbered 2.4) | Replaces all three menus |
-| 5 | Report Design | p. 11, §2.4 (renumbered 2.5) | Replaces the report table |
+| 5 | Report Design | p. 11, §2.4 (renumbered 2.5) | Replaces the intro sentence and the report table |
 | 6 | Cancellation and Attendance Data | p. 15, after §3.5 | **New §3.6** (old 3.6 → 3.7, old 3.7 → 3.8) |
 | 7 | Database Design / Schema | p. 15–16, §3.6 (renumbered 3.7) | Replaces the section and Table Summary |
-| 8 | Sample SQL Queries | p. 16–18, §3.7 (renumbered 3.8) | Replaces all six queries, adds two |
+| 8 | Sample SQL Queries | p. 16–18, §3.7 (renumbered 3.8) | Replaces all six queries, adds three |
 | 9 | Implemented Features | p. 20, §4.4 | Replaces the table |
 | 10 | Platform Decisions | p. 30, §5.2 | Replaces the stack table |
-| — | Changes to make by hand | various | Deletions, not paste-ins — see final section |
+| — | Changes to make by hand | various | 14 items — deletions and edits, not paste-ins. See final section |
 
 ---
 
@@ -40,13 +40,17 @@ affected headings are called out where that happens.
   availability blocks, and prescription refill requests.
 - **On-screen confirmations:** booking requests, approval and cancellation notices, scheduling
   conflicts, and status changes shown to the user as they occur.
-- **Notifications:** an in-application notification for every appointment event, delivered to the
-  affected user's notification tray, together with email and text-message reminders for users who
-  have enabled those channels.
+- **Notifications:** an in-application notification for every appointment event — request, approval,
+  reschedule, cancellation, completion, and a prompt to move a booking the practice has blocked out —
+  delivered to the affected user's notification tray. The same message is mirrored to email and to
+  text message for users who have those channels switched on in their profile. Scheduled
+  pre-appointment reminders (a message sent a fixed interval before a visit) are not built and remain
+  a future enhancement; what exists today is event-driven.
 - **Reports:** the five operational reports described in section 2.5, viewable on screen by clinic
-  administrators over a date range of their choosing. Every report can be downloaded as a CSV file
-  for use in a spreadsheet, which is how a practice manager circulates figures to people who do not
-  hold a MediSync account.
+  administrators. The Daily Appointment Report is run for a single date and defaults to today; the
+  other four take a date range and default to the current calendar month. Every report can be
+  downloaded as a CSV file for use in a spreadsheet, which is how a practice manager circulates
+  figures to people who do not hold a MediSync account.
 
 ---
 
@@ -64,6 +68,13 @@ messaging vendor is a procurement decision a clinic makes at deployment rather t
 the prototype should pre-empt. The boundary and the data flows in the diagram are therefore accurate;
 only the final delivery hop is simulated, and substituting a real provider is a change to one
 function.
+
+One limit is worth stating plainly, because the report calls automated reminders a future
+enhancement in Phase 5 and that remains true. Messages are raised by events — a booking is requested,
+approved, moved, or cancelled — not by a clock. There is no scheduled job that walks tomorrow's book
+and sends a reminder ahead of each visit. The channel plumbing, the per-user preferences, and the
+message wording for a reminder all exist; what is missing is the scheduler that would trigger them,
+which is the piece a production deployment would add alongside the messaging vendor.
 
 ---
 
@@ -102,6 +113,11 @@ weekly pattern cannot express — vacation, a conference, a clinic closure — a
 one returns no slots at all, regardless of what the physician's usual week looks like. Appointments
 already booked inside a blocked range are not cancelled: the patient keeps their place and the
 booking is flagged for the patient to reschedule, which is the decision rule described in section 3.5.
+Every live booking in the range is flagged, both the requests still awaiting approval and the ones the
+clinic has already confirmed — a confirmed patient turning up to a closed clinic is the worse of the
+two failures, so limiting the flag to pending requests would protect the wrong group. Lifting one
+block clears the flag only from bookings that no longer fall inside any remaining block, so
+overlapping absences do not cancel each other out.
 
 The same slot-generation logic supplies the denominator for the Provider Utilization Report. Capacity
 for a physician over a date range is calculated by expanding the same weekly windows across the range
@@ -135,42 +151,54 @@ and role verification:
 - Dashboard
 - Find a Doctor → Search by Name, Search by Specialty, Search by Location
 - Book Appointment → Select Doctor, Select Date/Time, Confirm
-- My Appointments → All, Upcoming, Pending, Past, Reschedule, Cancel
+- My Appointments → List View, Calendar View; All, Upcoming, Pending, Past; Reschedule, Cancel
 - Medications → Request Refill, Refill Status
 - Profile → Personal Info, Insurance Info, Reminder Preferences
 
 **Doctor Menu**
-- Schedule → Day View, Complete Visit with Note
-- My Patients → Patient List, Patient Chart
+- Schedule → Day View, Week View, Month View; Complete Visit with Note, Record Non-Attendance
+- My Patients → Patient List, Patient Chart → Visit Notes, Prescribe, Stop Medication
 - Refill Requests → Approve / Deny
 - Reports → Daily Appointments, My Workload, Patient Visit History
 
 **Administrator Menu**
 - Overview
-- Appointments → Approve, Complete, Record Non-Attendance, Cancel, Record Note
+- Appointments → Approve, Reschedule, Cancel, Record Non-Attendance, Record Note
 - Reports → Daily Appointments, Doctor Workload, Cancellations, Provider Utilization
 - Physicians → Add Physician, Edit Physician, Create Portal Login, Deactivate
 - Schedules → Weekly Availability, Availability Blocks
 - Locations → Add Site, Edit Site
 - Specialties → Add, Edit, Delete
 
-Two changes from the original menu hierarchy are worth noting. Search by Location is now a working
+Three changes from the original menu hierarchy are worth noting. Search by Location is now a working
 filter rather than a planned one: a patient may narrow the physician directory to a single clinic
 site, which matters in a practice operating from more than one building. The administrator menu no
 longer offers a View Patient Records item. Clinic administrators are deliberately not given access to
 clinical records, on the same need-to-know principle that governs the rest of the system —
 administrators schedule care, and scheduling does not require reading a patient's chart.
 
+The third is that completing a visit is absent from the administrator's appointment actions and
+present in the physician's. Marking a visit complete is the provider stating that they saw the
+patient, and it is the row every workload and utilization figure is built on. An administrator can
+see that a slot came and went; they cannot see that a consultation happened. The API refuses the
+transition from an administrator and names the physician who owns it, rather than treating it as an
+invalid request, so the person is told where to go instead of retrying something that can never
+succeed. Recording non-attendance is the mirror case and sits in both menus: either the front desk or
+the provider can state that the patient never arrived, because both were there to observe it.
+
 ---
 
 ## 5. Report Design
 
-**Insert at:** page 11, section 2.4 (renumbered 2.5) — *replaces the report table*
+**Insert at:** page 11, section 2.4 (renumbered 2.5) — *replaces the introductory sentence and the
+report table. The two "Sample Report Layout" subsections that follow on pages 11–12 stay, with the
+one correction noted in the final section of this document.*
 
 ### 2.5   Report Design
 
-MediSync generates the following operational reports. Each accepts a date range, defaults to the
-current month, and may be downloaded as a CSV file.
+MediSync generates the following five operational reports. The Daily Appointment Report is run for a
+single date and defaults to today; the other four take a date range and default to the current
+calendar month. Every report can be downloaded as a CSV file.
 
 | Report Name | Data Produced | Who Can Run It | Purpose |
 | --- | --- | --- | --- |
@@ -187,10 +215,12 @@ days covered by an availability block, so a physician on leave is not penalised 
 offered. Confirmed, completed, and missed appointments all count as booked, because each consumed the
 slot; cancelled appointments do not, because the slot returned to the pool.
 
-The Patient Visit History Report is available to physicians only. It is the one report that exposes
-clinical notes, and the same need-to-know reasoning that keeps patient records out of the
+The Patient Visit History Report is surfaced in the physician's portal only. It is the one report that
+exposes clinical notes, and the same need-to-know reasoning that keeps patient records out of the
 administrator's menu applies to it: a physician may review the history of a patient under their care,
-and the report restricts them to exactly that set.
+and the report restricts them to exactly that set — asking for a patient they have never seen is
+refused outright rather than answered with an empty table, since an empty table would still confirm
+the patient exists. The administrator's Reports screen offers the other four and not this one.
 
 ---
 
@@ -226,13 +256,18 @@ accepts free text, so an uncommon reason is captured rather than forced into the
 | --- | --- |
 | Patient | Schedule conflict; Feeling better / no longer needed; Transport or access problem; Cost or insurance concern; Booking another time |
 | Clinic administrator (cancellation) | Provider unavailable; Clinic closure; Rescheduled at patient request; Duplicate booking; Booked in error |
-| Clinic administrator (non-attendance) | Did not attend, no contact; Arrived too late to be seen; Patient called after the fact |
+| Clinic staff — administrator or physician (non-attendance) | Did not attend, no contact; Arrived too late to be seen; Patient called after the fact |
 
 Non-attendance is a distinct status from cancellation. A cancelled appointment is one the practice was
 told about in advance; a no-show is a confirmed appointment the patient never arrived for, and only
-clinic staff can record it, since only they know whether the patient turned up. A no-show carries a
-reason in the same field a cancellation uses, so the reporting query reads one column for both
-outcomes, but no initiator is attributed to it, because nobody cancelled the visit. A patient
+clinic staff can record it, since only they know whether the patient turned up. Either the front desk
+or the treating physician may record it, from the same preset list. It can be recorded only against a
+booking that was actually confirmed: a request nobody ever approved was never a commitment the patient
+could fail to keep, and allowing a no-show against one would inflate the figure the practice measures
+itself on. A no-show carries a reason in the same field a cancellation uses, so the reporting query
+reads one column for both outcomes, but no initiator is attributed to it, because nobody cancelled
+the visit — in the live database every no-show row has a reason and a null initiator, which is what
+lets the report tell the two apart at a glance. A patient
 rescheduling an existing booking produces a third case: the superseded booking is recorded as a
 patient cancellation with the fixed reason "Rescheduled to another time", so a booking that moved can
 be told apart from a patient who walked away.
@@ -297,7 +332,14 @@ with `full_name` defined as a generated column the database derives and maintain
 sort physicians and patients by surname, which a single name field cannot support, and a combined field
 cannot be reliably split back apart — "Mary Anne Van Der Berg" has no dependable division point. Because
 `full_name` is generated rather than stored by the application, the display name can never drift out of
-step with its parts, and the database rejects any attempt to write to it directly.
+step with its parts, and the database rejects any attempt to write to it directly. On `doctors` the
+credential prefix is a third part rather than something baked into the first name, so the generated
+name reads "Dr. Sarah Kim" while the surname remains available on its own to sort by.
+
+**A physician's portrait is a path, not an image.** `doctors.photo_url` points at a static file served
+with the front end. Storing the picture itself in the database would mean pulling every face through
+a query on every render of the directory, which is the slowest available way to draw a list of
+photographs. The column is nullable, and a physician without one falls back to their initials.
 
 #### Table Summary
 
@@ -307,7 +349,7 @@ step with its parts, and the database rejects any attempt to write to it directl
 | patients | Demographic profile for users holding the patient role | FK to users; 1 patient → many appointments, many prescriptions |
 | specialties | Lookup table of medical specialties | 1 specialty → many doctors |
 | locations | Clinic sites the practice operates from | 1 location → many schedule windows, many appointments |
-| doctors | Physician directory entry patients browse and book against | FK to specialties; optional FK to users; 1 doctor → many appointments |
+| doctors | Physician directory entry patients browse and book against, including the portrait shown in it | FK to specialties; optional FK to users; 1 doctor → many appointments |
 | doctor_schedules | Recurring weekly availability windows, each at one site | FK to doctors, FK to locations |
 | schedule_blocks | Date ranges removed from a physician's availability | FK to doctors |
 | appointments | Core transactional table linking a patient and a physician to a date, time, and site | FK to patients, doctors, locations; optional self-FK for a rescheduled booking |
@@ -348,11 +390,11 @@ so a half-created account cannot exist. `full_name` is not supplied — the data
 ```sql
 INSERT INTO users (email, password_hash, role, first_name, last_name, phone)
 VALUES ('jordan.alvarez@email.com', $1, 'patient', 'Jordan', 'Alvarez', '555-0142')
-RETURNING id;
+RETURNING id;                       -- $1 is the bcrypt hash; the id feeds the next statement
 
 INSERT INTO patients (user_id, date_of_birth, gender, address, insurance_provider)
 VALUES ($1, '1990-04-12', 'prefer_not_to_say', '88 Bleecker St, New York, NY', 'Aetna')
-RETURNING id;
+RETURNING id;                       -- $1 here is the users.id returned above
 ```
 
 **Search available physicians by specialty and site.**
@@ -446,26 +488,45 @@ ORDER BY a.appt_time, d.last_name;
 ```
 
 **Doctor Workload Report.** Booked hours are derived from the slot length of the window each
-appointment falls in, so a practice running appointments of different lengths reports correctly.
+appointment falls in, so a practice running appointments of different lengths reports correctly: a
+fifteen-minute dermatology follow-up and a forty-five-minute new-patient visit are one appointment
+each and nothing like one hour each.
 
 ```sql
 SELECT d.full_name AS doctor, s.name AS specialty_name,
        COUNT(a.id) AS appointments,
-       ROUND(SUM(COALESCE(ds.slot_minutes, 30)) / 60.0, 1) AS booked_hours
+       ROUND(COALESCE(SUM(COALESCE(w.slot_minutes, 30))
+                      FILTER (WHERE a.id IS NOT NULL), 0) / 60.0, 1) AS booked_hours
 FROM doctors d
 LEFT JOIN specialties s ON s.id = d.specialty_id
 LEFT JOIN appointments a
        ON a.doctor_id = d.id
       AND a.appt_date BETWEEN $1::date AND $2::date
       AND a.status IN ('confirmed', 'completed', 'no_show')
-LEFT JOIN doctor_schedules ds
-       ON ds.doctor_id = a.doctor_id
-      AND ds.weekday = EXTRACT(DOW FROM a.appt_date)
-      AND a.appt_time >= ds.start_time AND a.appt_time < ds.end_time
+LEFT JOIN LATERAL (
+  SELECT ds.slot_minutes
+  FROM doctor_schedules ds
+  WHERE ds.doctor_id = a.doctor_id
+    AND ds.weekday   = EXTRACT(DOW FROM a.appt_date)
+    AND a.appt_time >= ds.start_time
+    AND a.appt_time <  ds.end_time
+  ORDER BY ds.start_time
+  LIMIT 1
+) w ON true
 WHERE d.active = true
 GROUP BY d.id, d.full_name, d.last_name, s.name
 ORDER BY appointments DESC, d.last_name;
 ```
+
+Three details in that statement are load-bearing. The physician join is a `LEFT JOIN`, so a provider
+with an empty book reads as a row of zeroes rather than vanishing from the report — a missing row
+looks like a data problem, while a zero is an answer. The `FILTER (WHERE a.id IS NOT NULL)` is what
+keeps that row honest: without it the outer join's single null appointment still passes through
+`COALESCE(w.slot_minutes, 30)` and the physician is credited with half an hour they never worked. And
+the schedule lookup is a `LATERAL … LIMIT 1` rather than a plain join, so one appointment can only
+ever match one window and contribute its length once. The fallback to thirty minutes covers an
+appointment whose window has since been narrowed or deleted: a visit that already happened has to keep
+contributing hours rather than silently dropping out of the sum.
 
 **Appointment Cancellation Report.** Cancellations and non-attendance are read together so the two
 losses can be compared.
@@ -497,26 +558,37 @@ ORDER BY a.appt_date DESC, a.appt_time;
 | Appointment booking with database-enforced conflict prevention | Implemented |
 | Administrator approval of pending appointment requests | Implemented |
 | Patient rescheduling of an existing appointment | Implemented |
+| Administrator rescheduling on the patient's behalf | Implemented |
 | Appointment cancellation with reason and initiator captured | Implemented |
-| Non-attendance recording | Implemented |
-| Visit completion with clinical note | Implemented |
+| Non-attendance recording by administrator or physician | Implemented |
+| Visit completion with clinical note (physician only) | Implemented |
+| Day, week, and month calendar views | Implemented |
 | Physician weekly schedule management | Implemented |
 | Physician availability blocks with automatic rescheduling flags | Implemented |
 | Multi-site clinic locations | Implemented |
 | Specialty management | Implemented |
 | Physician portal account provisioning | Implemented |
+| Physician directory portraits | Implemented |
+| Prescribing and discontinuing medications from the patient chart | Implemented |
 | Prescription refill requests and physician approval | Implemented |
 | Administrator dashboard | Implemented |
-| Five operational reports with date ranges | Implemented |
+| Five operational reports with date filters | Implemented |
 | CSV export of every report | Implemented |
 | In-application notifications | Implemented |
-| Email and SMS appointment reminders | Implemented (delivery simulated) |
+| Email and SMS notification channels with per-user preferences | Implemented (delivery simulated) |
 | Backend database integration (PostgreSQL / Neon) | Implemented |
+| Automated pre-appointment reminders on a schedule | Planned (Future Enhancement) |
 | Telemedicine / video visits | Planned (Future Enhancement) |
 | Insurance eligibility verification | Planned (Future Enhancement) |
 | Online co-pay and bill payment | Planned (Future Enhancement) |
 | Patient-facing mobile application | Planned (Future Enhancement) |
 | Analytics dashboard with trend charts over time | Planned (Future Enhancement) |
+
+The reminder row is worth reading carefully, because it is the one line in this table that is neither
+a plain "Implemented" nor a plain "Planned". The channels, the per-user preferences, and the message
+wording are built and exercised on every appointment event; the delivery hop to a carrier is
+simulated, and the scheduler that would fire a reminder ahead of a visit is not built at all. The
+report's Phase 5 entry for automated reminders therefore stands as written.
 
 ---
 
@@ -548,37 +620,95 @@ duplicating rules across pages.
 
 ## Changes the team must make by hand
 
-These are deletions and edits to existing report text rather than material to paste in.
+These are deletions and edits to existing report text rather than material to paste in. They are in
+page order, so the list can be worked through in one pass. Items 8 to 11 are passages that turn out to
+be correct as written; they are recorded so nobody "fixes" them by mistake.
 
 1. **Page 11, section 2.3 — remove the administrator menu line `Patients → View Patient Records`.**
    Clinic administrators do not have access to patient clinical records in MediSync. The replacement
    menu in section 4 of this document already omits it; the note is here so the change is not missed
    if the menus are edited by hand instead.
 
-2. **Page 15, section 3.4, Use Case 3 — remove the words "or an administrator".** The sentence
+2. **Page 11, section 2.3 — remove `Patient Visit History` from the administrator menu's Reports
+   line.** The original reads `Reports → Daily Appointments, Doctor Workload, Cancellations, Patient
+   Visit History, Provider Utilization`. The administrator's Reports screen offers four reports and
+   not that one, for the same need-to-know reason as the item above. This is the same correction as
+   item 3, applied to the menu rather than to the report table; both places have to change or the two
+   pages contradict each other.
+
+3. **Page 11, section 2.4 — change the Patient Visit History Report audience from "Admin, Doctor" to
+   "Doctor".** This is already reflected in the replacement table in section 5 above.
+
+4. **Page 11, section 2.4 — the sentence introducing the report table is replaced, not just the
+   table.** It currently reads "All reports are available to Clinic Administrators from the Reports
+   menu; the Daily Appointment Report and Doctor Workload Report are also available to individual
+   doctors for their own schedule." Both halves are now wrong: administrators do not get the Patient
+   Visit History Report, and physicians get three reports rather than two. The replacement sentence is
+   in section 5 above.
+
+5. **Page 11, "Sample Report Layout — Daily Appointment Report" — add a Location column.** The layout
+   shows Time, Patient, Doctor, Specialty, Status. The report as built also names the clinic site,
+   which is the point of supporting a multi-site practice at all, and the replacement description in
+   section 5 says so. Adding the column keeps the sample layout consistent with the table above it.
+   The Doctor Workload sample layout on page 12 needs no change.
+
+6. **Page 15, section 3.4, Use Case 3 — remove the words "or an administrator".** The sentence
    currently reads that a visit note is "stored as part of the visit record for future reference by
    that provider or an administrator". Administrators cannot read visit notes through any patient-facing
    or record-browsing screen. They may record or amend a note against a specific appointment they are
    administering, which is a scheduling action; they have no route that lists a patient's clinical
    history. The phrase should end at "that provider".
 
-3. **Page 11, section 2.4 — change the Patient Visit History Report audience from "Admin, Doctor" to
-   "Doctor".** This is already reflected in the replacement table in section 5 above.
+7. **Page 15, section 3.5, first bullet — drop "and returns the next available slots".** The bullet
+   claims that a request for a taken slot is rejected "and returns the next available slots". The
+   system rejects the request and tells the patient to pick another time; the remaining open slots are
+   already on screen from the availability search, so nothing is re-sent with the rejection. The
+   bullet should end at "(prevents double-booking)".
 
-4. **Page 5, section 1.1 and page 5, section 1.3 — the phrase "approve or cancel appointment requests"
-   is now correct and needs no change.** It is listed here only because it was previously inconsistent
-   with the prototype; the approval workflow has since been built, and these sentences are accurate as
-   written.
+8. **Page 15, section 3.5, third bullet — widen "any pending requests" to "any live bookings".** The
+   bullet reads that blocking a doctor's availability flags "any pending requests for that window".
+   The system flags every booking still on the book inside the range, confirmed ones included — a
+   confirmed patient arriving at a closed clinic is the worse of the two failures. The sentence should
+   read "any bookings still live in that window, whether pending or confirmed, are flagged for the
+   patient to reschedule".
 
-5. **Page 19, section 4.3 — the demo story is accurate and needs no change,** with one addition worth
-   making: the patient's edit of their appointment is now a genuine reschedule that releases the
-   original slot and creates a new request, and the administrator's approval step operates on a real
-   pending queue. Both are worth naming explicitly during the demonstration.
+9. **Page 20, section 4.5, and the screenshots throughout — the running application is branded
+   MediSync.** The parenthetical note stating that the prototype is "branded MAPS in the running
+   application" should be deleted, and the screenshots in section 4.5 recaptured, as the interface has
+   been restyled and several screens are new. While recapturing, note that the Figure 9 caption on
+   page 22 reads "Find a Doctor — search by name or specialty"; the screen now also filters by clinic
+   location, so the caption should say so.
 
-6. **Throughout — the running application is branded MediSync.** The parenthetical note on page 20
-   stating that the prototype is "branded MAPS in the running application" should be deleted, and the
-   screenshots in section 4.5 recaptured, as the interface has been restyled and several screens are
-   new.
+10. **Page 34, Appendix D — add a change-log row for the schema.** The change log records the week-3
+    decision to promote prescriptions out of the appointment record, and section 7 of this document
+    cites it. It does not record the later growth from the seven-table design to the eleven-table one.
+    A row reading something like "Split login credentials onto a shared `users` table and added
+    locations, schedules, availability blocks, refill requests, and notifications — one authentication
+    path for all three roles, and multi-site scheduling the seven-table design could not express" keeps
+    the appendix consistent with section 7.
+
+11. **Page 5, sections 1.1 and 1.3 — the phrase "approve or cancel appointment requests" is now
+    correct and needs no change.** It is listed here only because it was previously inconsistent with
+    the prototype; the approval workflow has since been built, and these sentences are accurate as
+    written.
+
+12. **Page 19, section 4.3 — the demo story is accurate and needs no change,** with one addition worth
+    making: the patient's edit of their appointment is now a genuine reschedule that releases the
+    original slot and creates a new request, and the administrator's approval step operates on a real
+    pending queue. Both are worth naming explicitly during the demonstration.
+
+13. **Page 34, Appendix C, week 4 — the meeting log recording that a seven-table schema was approved
+    is history and is correct as written.** It records what the team decided in week 4, not what the
+    database ended up as. Appendix D is where the later growth belongs, which is item 10.
+
+14. **Page 8 (§2.1), page 30 (§5.1), page 31 (§5.6), and page 34 (Appendix B, Scope Out) — the
+    statements that SMS and email reminders were deferred are correct and need no change.** They are
+    listed here only because section 9 of this document marks the notification channels as
+    implemented, which looks like a contradiction and is not one. What was deferred, and remains
+    deferred, is the automated reminder sent ahead of a visit on a schedule. What exists is
+    event-driven notification with the email and SMS channels wired to per-user preferences and the
+    final delivery hop simulated. If any of those four passages is edited, keep the distinction; do
+    not promote them to "implemented".
 
 ---
 
@@ -586,7 +716,13 @@ These are deletions and edits to existing report text rather than material to pa
 
 - Where this document and the original report disagree on a fact, this document reflects the code as
   built and verified. Every SQL statement in section 8 was executed against the live database before
-  being included.
+  being included, including against a date range with no appointments in it — that is the case that
+  exposed the booked-hours error described under the Doctor Workload query.
 - The two new sections (2.3 Physician Availability and Slot Generation, and 3.6 Cancellation and
   Attendance Data) shift the numbering of the sections that follow them within their chapters. The
-  table of contents on pages 2–3 needs regenerating once they are merged.
+  table of contents on pages 2–3 needs regenerating once they are merged. Section 3.7's table of
+  contents entries also change: the six query subheadings become nine, since the availability, the
+  approval, and the cancellation report queries are new.
+- Section 10 lists Vercel as the deployment target, which is where the live demo runs. The repository
+  also carries a Render blueprint and an AWS walkthrough as alternative deployment paths; neither is
+  what the report should claim, and neither needs mentioning, but they exist if a reader asks.

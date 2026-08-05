@@ -8,10 +8,14 @@
  * count, and this page prints that answer rather than swallowing it.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Tags } from 'lucide-react';
-import { adminCreateSpecialty, api, type OkResponse, type Specialty } from '../../lib/api';
+import { Link } from 'react-router-dom';
+import { ChevronRight, Plus, Tags } from 'lucide-react';
 import {
-  Alert, Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader,
+  adminCreateSpecialty, adminListDoctors, api,
+  type Doctor, type OkResponse, type Specialty,
+} from '../../lib/api';
+import {
+  Alert, Avatar, Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader,
   Spinner, Table, Td, Textarea, Th,
 } from '../../components/ui';
 import { useToast } from '../../components/Toast';
@@ -62,6 +66,16 @@ export default function AdminSpecialties() {
   const [modalError, setModalError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  /**
+   * The headcount answers "how many"; this answers "who".
+   *
+   * The roster is read from the physician directory the page already has access
+   * to and filtered here rather than fetched per specialty: a practice has tens
+   * of physicians, so one list serves every row and a click costs no round trip.
+   */
+  const [roster, setRoster] = useState<AdminSpecialty | null>(null);
+  const [doctors, setDoctors] = useState<Doctor[] | null>(null);
+
   const load = useCallback(() => {
     listAdminSpecialties()
       .then((d) => {
@@ -75,6 +89,19 @@ export default function AdminSpecialties() {
   }, []);
 
   useEffect(load, [load]);
+
+  // Fetched once alongside the specialties; the roster modal reads from it.
+  useEffect(() => {
+    adminListDoctors()
+      .then((d) => setDoctors(d.doctors))
+      // The count badge stays; only the click-through is withheld.
+      .catch(() => setDoctors([]));
+  }, []);
+
+  /** This specialty's physicians, by surname, as the directory lists them. */
+  const rosterDoctors = roster
+    ? (doctors || []).filter((d) => d.specialty_id === roster.id)
+    : [];
 
   function openModal(specialty?: AdminSpecialty) {
     setModalError('');
@@ -192,7 +219,18 @@ export default function AdminSpecialties() {
                   <Td className="text-slate-500">{s.description || '—'}</Td>
                   <Td align="right">
                     {s.doctor_count > 0 ? (
-                      <Badge tone="blue">{s.doctor_count}</Badge>
+                      <button
+                        type="button"
+                        onClick={() => setRoster(s)}
+                        aria-label={`Show the ${s.doctor_count} physician${
+                          s.doctor_count === 1 ? '' : 's'
+                        } listed under ${s.name}`}
+                        className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-600"
+                      >
+                        <Badge tone="blue" className="cursor-pointer hover:bg-accent-100">
+                          {s.doctor_count}
+                        </Badge>
+                      </button>
                     ) : (
                       <span className="text-slate-400">None</span>
                     )}
@@ -256,6 +294,49 @@ export default function AdminSpecialties() {
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
+      </Modal>
+
+      {/* Who is filed under a specialty, and a way through to each of them.
+          The whole row is the link, not just the name: a roster is read to get
+          somewhere, and a one-word target in a full-width row is a poor one. */}
+      <Modal
+        open={Boolean(roster)}
+        title={roster ? `${roster.name} physicians` : 'Physicians'}
+        onClose={() => setRoster(null)}
+        size="sm"
+        footer={<Button onClick={() => setRoster(null)}>Close</Button>}
+      >
+        {doctors === null ? (
+          <Spinner />
+        ) : rosterDoctors.length === 0 ? (
+          <EmptyState icon={Tags} title="No physicians listed">
+            Nobody is filed under this specialty yet.
+          </EmptyState>
+        ) : (
+          <ul className="-my-1 divide-y divide-slate-100">
+            {rosterDoctors.map((d) => (
+              <li key={d.id}>
+                <Link
+                  to={`/admin/physicians/${d.id}`}
+                  onClick={() => setRoster(null)}
+                  className="flex items-center gap-3 rounded-lg px-2 py-2.5 hover:bg-slate-50"
+                >
+                  <Avatar name={d.full_name} src={d.photo_url} size="sm" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-900">
+                      {d.full_name}
+                    </span>
+                    <span className="block truncate text-xs text-slate-500">
+                      {d.room ? `Room ${d.room}` : 'No room assigned'}
+                      {!d.active && ' · Inactive'}
+                    </span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 flex-none text-slate-400" aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </Modal>
     </div>
   );

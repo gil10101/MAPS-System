@@ -191,8 +191,8 @@ export default function PhysicianDetail() {
       <PageHeader
         back={BACK}
         title={
-          <span className="flex items-center gap-3">
-            <Avatar name={doctor.full_name} src={doctor.photo_url} />
+          <span className="flex items-center gap-4 sm:gap-5">
+            <Avatar name={doctor.full_name} src={doctor.photo_url} size="xl" />
             {doctor.full_name}
           </span>
         }

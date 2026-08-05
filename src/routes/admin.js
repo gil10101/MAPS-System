@@ -1449,6 +1449,72 @@ function missingLocationField(fields) {
   return key ? LOCATION_LABELS[key] : null;
 }
 
+// ---------------------------------------------------------------------------
+// Patients — the scheduling view of a person, and nothing more
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/admin/patients/:id — who the clinic is scheduling, and their book.
+ *
+ * Deliberately scheduling data only. An administrator gets the demographics
+ * and insurance they need to book and bill a visit, and the list of visits
+ * themselves, and stops there: `appointments.notes` is not selected, and no
+ * prescription is read. That is the same need-to-know rule that keeps a patient
+ * records browser out of the admin menu — an administrator may record a note
+ * against one appointment they are administering, but nothing here assembles a
+ * clinical history for them to read.
+ *
+ * The appointment list is the whole book rather than a page of it: a patient
+ * has tens of visits, not thousands, and the profile is opened precisely to see
+ * the pattern across all of them.
+ */
+router.get(
+  '/patients/:id',
+  wrap(async (req, res) => {
+    const patient = await db.one(
+      `SELECT p.id, p.date_of_birth, p.gender, p.address, p.insurance_provider,
+              p.created_at,
+              u.id AS user_id, u.full_name, u.first_name, u.last_name,
+              u.email, u.phone, u.notify_email, u.notify_sms
+       FROM patients p
+       JOIN users u ON u.id = p.user_id
+       WHERE p.id = $1`,
+      [req.params.id]
+    );
+    if (!patient) return res.status(404).json({ error: 'Patient not found.' });
+
+    const appointments = await db.query(
+      `SELECT a.id, a.appt_date, a.appt_time, a.status, a.reason,
+              a.cancel_reason, a.cancelled_by, a.reschedule_required,
+              d.id AS doctor_id, d.full_name AS doctor_name,
+              s.name AS specialty_name,
+              l.name AS location_name
+       FROM appointments a
+       JOIN doctors d ON d.id = a.doctor_id
+       LEFT JOIN specialties s ON s.id = d.specialty_id
+       LEFT JOIN locations l   ON l.id = a.location_id
+       WHERE a.patient_id = $1
+       ORDER BY a.appt_date DESC, a.appt_time DESC`,
+      [patient.id]
+    );
+
+    // Counted here rather than in the browser so the figures cannot disagree
+    // with the list they summarise.
+    const counts = await db.one(
+      `SELECT COUNT(*)::int                                       AS total,
+              COUNT(*) FILTER (WHERE status = 'pending')::int     AS pending,
+              COUNT(*) FILTER (WHERE status = 'confirmed')::int   AS confirmed,
+              COUNT(*) FILTER (WHERE status = 'completed')::int   AS completed,
+              COUNT(*) FILTER (WHERE status = 'cancelled')::int   AS cancelled,
+              COUNT(*) FILTER (WHERE status = 'no_show')::int     AS no_show
+       FROM appointments WHERE patient_id = $1`,
+      [patient.id]
+    );
+
+    res.json({ patient, appointments, counts });
+  })
+);
+
 /**
  * GET /api/admin/locations — every site, including inactive ones.
  * Unlike the public list, admin needs to see a closed site to reopen it and to
