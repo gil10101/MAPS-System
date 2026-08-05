@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, CalendarOff, CalendarRange, CheckCircle2, Clock, MapPin, Plus,
-  Stethoscope, Trash2,
+  Stethoscope, Trash2, type LucideIcon,
 } from 'lucide-react';
 import {
   WEEKDAYS, adminCreateBlock, adminCreateSchedule, adminDeleteBlock,
@@ -29,9 +29,11 @@ import {
   type Doctor, type Location, type Schedule, type ScheduleBlock, type Tone,
 } from '../../lib/api';
 import {
-  Alert, Badge, Button, Card, EmptyState, Field, IconButton, Input, Modal,
-  PageHeader, Select, Spinner, buttonClasses,
+  Alert, Avatar, Badge, Button, Card, EmptyState, Field, IconButton, Input, Modal,
+  PageHeader, Select, Spinner, Tabs, buttonClasses, cx,
 } from '../../components/ui';
+import MonthGrid, { startOfMonth } from '../../components/MonthGrid';
+import PhysicianPicker from '../../components/PhysicianPicker';
 import { useToast } from '../../components/Toast';
 
 /** Slot lengths a practice actually books in. */
@@ -73,12 +75,71 @@ function blockPhase(block: ScheduleBlock, today: string): { label: string; tone:
   return { label: 'In effect', tone: 'red' };
 }
 
+/** 'HH:MM' -> minutes since midnight. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * How many bookable slots one window yields.
+ *
+ * A trailing gap shorter than one slot is not a slot, which is the same rule
+ * the server generates availability by — the figure on this page has to be the
+ * one patients will actually see offered.
+ */
+function windowSlots(w: Schedule): number {
+  const span = toMinutes(w.end_time) - toMinutes(w.start_time);
+  const step = w.slot_minutes || 30;
+  return Math.max(0, Math.floor(span / step));
+}
+
+type View = 'list' | 'calendar';
+
+/** One swatch and its meaning, under the availability calendar. */
+function LegendKey({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+      <span className={cx('h-3 w-5 rounded', className)} aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+/** A headline number with its label, for the picker's summary row. */
+function SummaryPill({
+  icon: Icon, label, value, tone = 'slate',
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number | null;
+  tone?: 'slate' | 'amber';
+}) {
+  return (
+    <span
+      className={cx(
+        'inline-flex items-center gap-2 rounded-lg px-3 py-1.5',
+        tone === 'amber' ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-600'
+      )}
+    >
+      <Icon className="h-4 w-4 flex-none opacity-70" aria-hidden="true" />
+      <span className="text-sm font-bold tabular-nums text-slate-900">
+        {value === null ? '…' : value}
+      </span>
+      <span className="text-xs">{label}</span>
+    </span>
+  );
+}
+
 export default function AdminSchedules() {
   const toast = useToast();
   const today = todayStr();
 
   const [doctors, setDoctors] = useState<Doctor[] | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
+  /** Which half of the page is showing: the rules, or what they produce. */
+  const [view, setView] = useState<View>('list');
+  const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [doctorId, setDoctorId] = useState('');
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [blocks, setBlocks] = useState<ScheduleBlock[] | null>(null);
@@ -144,6 +205,8 @@ export default function AdminSchedules() {
   useEffect(load, [load]);
 
   const selected = doctors?.find((d) => String(d.id) === doctorId) ?? null;
+  /** Bookable slots the published pattern yields in a full week. */
+  const weeklySlots = schedules ? schedules.reduce((n, w) => n + windowSlots(w), 0) : null;
   const loadingPanels = !!doctorId && !schedules && !panelError;
   /** Windows already on the weekday being filled in — see the modal. */
   const sameWeekday = (schedules ?? []).filter(
@@ -327,27 +390,64 @@ export default function AdminSchedules() {
 
       {doctors && doctors.length > 0 && (
         <>
+          {/* The header answers two questions in order: which physician, and
+              what shape is their week. The picker stays a fixed column on the
+              left so it does not move as the summary beside it fills in. */}
           <Card className="mb-4">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,20rem)_1fr] sm:items-end">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr] lg:items-start">
               <Field label="Physician" htmlFor="s-doctor" className="mb-0">
-                <Select
+                <PhysicianPicker
                   id="s-doctor"
+                  doctors={doctors}
                   value={doctorId}
-                  onChange={(e) => chooseDoctor(e.target.value)}
-                >
-                  {doctors.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {`${d.full_name}${d.active === false ? ' — not accepting bookings' : ''}`}
-                    </option>
-                  ))}
-                </Select>
+                  onChange={chooseDoctor}
+                />
               </Field>
+
               {selected && (
-                <p className="text-sm text-slate-500">
-                  {selected.specialty_name || 'No specialty'} ·{' '}
-                  {schedules ? plural(schedules.length, 'weekly window') : '…'} ·{' '}
-                  {blocks ? plural(blocks.length, 'block') : '…'}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-3 lg:justify-end">
+                  <Link
+                    to={`/admin/physicians/${selected.id}`}
+                    className="flex min-w-0 items-center gap-3 rounded-lg px-1 py-1 hover:bg-slate-50"
+                  >
+                    <Avatar name={selected.full_name} src={selected.photo_url} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-slate-900">
+                        {selected.full_name}
+                      </span>
+                      <span className="block truncate text-xs text-slate-500">
+                        {selected.specialty_name || 'No specialty'}
+                        {selected.room ? ` · Room ${selected.room}` : ''}
+                      </span>
+                    </span>
+                  </Link>
+
+                  {/* Counts as their own tiles rather than a run-on sentence:
+                      these are the two numbers the page exists to change, and
+                      an admin checks them before and after every edit. */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SummaryPill
+                      icon={CalendarRange}
+                      label="Weekly windows"
+                      value={schedules ? schedules.length : null}
+                    />
+                    <SummaryPill
+                      icon={Clock}
+                      label="Slots a week"
+                      value={weeklySlots}
+                    />
+                    <SummaryPill
+                      icon={CalendarOff}
+                      label="Blocks"
+                      value={blocks ? blocks.length : null}
+                      tone={blocks && blocks.length > 0 ? 'amber' : 'slate'}
+                    />
+                  </div>
+
+                  {selected.active === false && (
+                    <Badge tone="slate">Not accepting bookings</Badge>
+                  )}
+                </div>
               )}
             </div>
           </Card>
@@ -403,7 +503,76 @@ export default function AdminSchedules() {
             </Alert>
           )}
 
-          <div className="grid items-start gap-4 lg:grid-cols-2">
+          {/* The two panels state the rule; the calendar shows what the rule
+              produces. An admin who has just blocked a fortnight wants to see
+              the fortnight, not re-derive it from a weekday pattern. */}
+          <div className="mb-4 flex items-center gap-2">
+            <Tabs
+              tabs={[
+                { id: 'list', label: 'Windows & blocks' },
+                { id: 'calendar', label: 'Calendar' },
+              ]}
+              active={view}
+              onChange={(id) => setView(id as View)}
+            />
+          </div>
+
+          {view === 'calendar' && (
+            <MonthGrid
+              className="mb-4"
+              month={month}
+              onMonthChange={setMonth}
+              today={today}
+              legend={
+                <>
+                  <LegendKey className="bg-accent-50 text-accent-700" label="Clinic hours" />
+                  <LegendKey className="bg-red-50 text-red-700" label="Blocked — no slots offered" />
+                  <span className="text-xs text-slate-500">
+                    Each day shows the windows that apply to that weekday, and the slots they yield.
+                  </span>
+                </>
+              }
+              renderDay={(key, date, inMonth) => {
+                const blocked = (blocks ?? []).find(
+                  (b) => key >= b.start_date && key <= b.end_date
+                );
+                const windows = (schedules ?? []).filter((w) => w.weekday === date.getDay());
+                if (blocked) {
+                  return (
+                    <span
+                      title={blocked.reason || 'Blocked'}
+                      className="block truncate rounded bg-red-50 px-1.5 py-1 text-[0.6875rem] font-semibold leading-tight text-red-700"
+                    >
+                      {blocked.reason || 'Blocked'}
+                    </span>
+                  );
+                }
+                if (windows.length === 0) {
+                  return inMonth ? (
+                    <span className="px-0.5 text-[0.6875rem] text-slate-400">No clinic</span>
+                  ) : null;
+                }
+                return windows.map((w) => (
+                  <span
+                    key={w.id}
+                    title={`${formatTime(w.start_time)}–${formatTime(w.end_time)} · ${
+                      w.location_name
+                    } · ${plural(windowSlots(w), 'slot')}`}
+                    className="block truncate rounded bg-accent-50 px-1.5 py-1 text-[0.6875rem] font-semibold leading-tight text-accent-700"
+                  >
+                    {formatTime(w.start_time)} · {windowSlots(w)}
+                  </span>
+                ));
+              }}
+            />
+          )}
+
+          <div
+            className={cx(
+              'grid items-start gap-4 lg:grid-cols-2',
+              view === 'calendar' && 'hidden'
+            )}
+          >
             <Card
               title="Weekly availability"
               actions={

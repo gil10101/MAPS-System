@@ -33,15 +33,17 @@ import {
   adminListAppointments, adminListDoctors, adminListLocations,
   adminRescheduleAppointment, adminSaveAppointmentNote, adminSetAppointmentStatus,
   apptHasStarted, formatDate, formatTime, getAvailability, todayStr,
-  NO_SHOW_REASONS, PRACTICE_CANCEL_REASONS, STAFF_STATUS_LABEL,
+  NO_SHOW_REASONS, PRACTICE_CANCEL_REASONS, STAFF_STATUS_LABEL, STATUS_TONE,
   type Appointment, type ApptStatus, type Doctor, type Location, type Slot,
+  type Tone,
 } from '../../lib/api';
 import {
   Alert, Button, Card, EmptyState, Field, FilterBar, Input, MenuItem, Modal,
   PageHeader, ReasonModal, RescheduleBadge, RowMenu, Select, SlotButton,
-  SortableTh, Spinner, StatusBadge, Table, Td, Textarea, Th, TruncatedText, cx,
+  SortableTh, Spinner, StatusBadge, Table, Tabs, Td, Textarea, Th, TruncatedText, cx,
   useSort,
 } from '../../components/ui';
+import MonthGrid, { startOfMonth } from '../../components/MonthGrid';
 import { useToast } from '../../components/Toast';
 
 /** Lifecycle order — the filter reads the way an appointment travels. */
@@ -107,6 +109,29 @@ function groupByLocation(slots: Slot[]): { id: number; name: string; times: Slot
   return groups;
 }
 
+/** Chip paint per tone, matching ui.tsx's badge tones pair for pair. */
+const CHIP_TONE: Record<Tone, string> = {
+  green: 'bg-emerald-50 text-emerald-700',
+  amber: 'bg-amber-50 text-amber-800',
+  red: 'bg-red-50 text-red-700',
+  slate: 'bg-slate-100 text-slate-600',
+  blue: 'bg-accent-50 text-accent-700',
+};
+
+/** Lifecycle order, so the key reads the way an appointment travels. */
+const LEGEND: ApptStatus[] = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'];
+
+/** How many chips a cell shows before the rest collapse into "+n more". */
+const MAX_CHIPS = 3;
+
+/** 'Dr. Sarah Kim' -> 'Kim'. A chip has room for one word. */
+function surname(name: string): string {
+  const words = (name || '')
+    .split(/\s+/)
+    .filter((w) => w && !/^(dr|mr|mrs|ms|prof)\.?$/i.test(w));
+  return words.length ? words[words.length - 1] : name;
+}
+
 export default function AdminAppointments() {
   const toast = useToast();
   const [params, setParams] = useSearchParams();
@@ -121,6 +146,9 @@ export default function AdminAppointments() {
   /** Which row has a request in flight, so only its button shows a spinner. */
   const [busyId, setBusyId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
+  const [month, setMonth] = useState(() => startOfMonth(new Date()));
+  /** The day whose full list is open from the calendar. */
+  const [dayKey, setDayKey] = useState<string | null>(null);
 
   // Reschedule dialog. `slots === null` is "still asking", not "none open" —
   // the two say very different things to whoever is on the phone.
@@ -136,6 +164,9 @@ export default function AdminAppointments() {
   const status = (STATUS_OPTIONS as string[]).includes(rawStatus)
     ? (rawStatus as ApptStatus)
     : '';
+  // Anything other than 'calendar' is the list, so a hand-edited ?view=grid
+  // lands somewhere sensible rather than on a blank page.
+  const view = params.get('view') === 'calendar' ? 'calendar' : 'list';
   const doctorId = params.get('doctor_id') || '';
   const locationId = params.get('location_id') || '';
   const from = params.get('from') || '';
@@ -348,6 +379,31 @@ export default function AdminAppointments() {
   const lastRow = Math.min(current * PAGE_SIZE, total);
   const visible = sorted.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
 
+  const today = todayStr();
+
+  /**
+   * The filtered set bucketed by day, each bucket in clock order.
+   *
+   * Built from `appointments` rather than the paged `visible` slice: a calendar
+   * showing only page one of a month would be a lie about how full the practice
+   * is, which is the single question the view exists to answer.
+   */
+  const byDate = useMemo(() => {
+    const map = new Map<string, Appointment[]>();
+    for (const a of appointments || []) {
+      const key = a.appt_date.slice(0, 10);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(a);
+      else map.set(key, [a]);
+    }
+    for (const bucket of map.values()) {
+      bucket.sort((x, y) => x.appt_time.localeCompare(y.appt_time));
+    }
+    return map;
+  }, [appointments]);
+
+  const dayList = dayKey ? byDate.get(dayKey) || [] : [];
+
   /**
    * The actions one row offers, from its status and the clock.
    *
@@ -454,7 +510,12 @@ export default function AdminAppointments() {
                   className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-slate-900">{a.patient_name}</div>
+                    <Link
+                      to={`/admin/patients/${a.patient_id}`}
+                      className="font-semibold text-slate-900 underline-offset-2 hover:text-accent-700 hover:underline"
+                    >
+                      {a.patient_name}
+                    </Link>
                     <div className="text-xs text-slate-600">
                       {formatDate(a.appt_date)} at {formatTime(a.appt_time)} ·{' '}
                       <Link
@@ -493,6 +554,20 @@ export default function AdminAppointments() {
           )}
         </Card>
       )}
+
+      {/* The table answers "what needs doing"; the calendar answers "how full
+          is the practice". Both read the same filtered set, so switching view
+          never changes which appointments are in scope. */}
+      <div className="mb-4 flex items-center gap-2">
+        <Tabs
+          tabs={[
+            { id: 'list', label: 'List' },
+            { id: 'calendar', label: 'Calendar' },
+          ]}
+          active={view}
+          onChange={(id: string) => setFilter('view', id === 'calendar' ? 'calendar' : '')}
+        />
+      </div>
 
       <Card className="mb-4">
         <FilterBar>
@@ -563,7 +638,61 @@ export default function AdminAppointments() {
         </FilterBar>
       </Card>
 
-      <Card>
+      {view === 'calendar' && appointments && appointments.length > 0 && (
+        <MonthGrid
+          month={month}
+          onMonthChange={setMonth}
+          today={today}
+          legend={LEGEND.map((s) => (
+            <span key={s} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+              <span
+                className={cx('h-3 w-5 rounded', CHIP_TONE[STATUS_TONE[s]])}
+                aria-hidden="true"
+              />
+              {STAFF_STATUS_LABEL[s]}
+            </span>
+          ))}
+          renderDay={(key: string) => {
+            const day = byDate.get(key) || [];
+            // One over the cap is drawn in full: "+1 more" costs exactly the
+            // line the chip it hides would have occupied.
+            const shown = day.length <= MAX_CHIPS + 1 ? day : day.slice(0, MAX_CHIPS);
+            const hidden = day.length - shown.length;
+            return (
+              <>
+                {shown.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setDayKey(key)}
+                    title={`${formatTime(a.appt_time)} · ${a.patient_name} · ${a.doctor_name} · ${
+                      STAFF_STATUS_LABEL[a.status]
+                    }`}
+                    className={cx(
+                      'block w-full truncate rounded px-1.5 py-1 text-left text-[0.6875rem] font-semibold leading-tight hover:ring-1 hover:ring-inset hover:ring-slate-400',
+                      CHIP_TONE[STATUS_TONE[a.status]],
+                      a.status === 'cancelled' && 'line-through'
+                    )}
+                  >
+                    {formatTime(a.appt_time)} {surname(a.doctor_name)}
+                  </button>
+                ))}
+                {hidden > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setDayKey(key)}
+                    className="px-1.5 text-left text-[0.6875rem] font-semibold text-slate-500 hover:text-slate-900"
+                  >
+                    +{hidden} more
+                  </button>
+                )}
+              </>
+            );
+          }}
+        />
+      )}
+
+      <Card className={cx(view === 'calendar' && 'hidden')}>
         {error && <Alert tone="error">{error}</Alert>}
         {!appointments && !error && <Spinner />}
         {appointments && appointments.length === 0 && !error && (
@@ -596,7 +725,14 @@ export default function AdminAppointments() {
                 {visible.map((a) => (
                   <tr key={a.id}>
                     <Td>
-                      <div className="font-semibold text-slate-900">{a.patient_name}</div>
+                      {/* The name is the way through to the person: who else
+                          they have seen, and what else is on their book. */}
+                      <Link
+                        to={`/admin/patients/${a.patient_id}`}
+                        className="font-semibold text-slate-900 underline-offset-2 hover:text-accent-700 hover:underline"
+                      >
+                        {a.patient_name}
+                      </Link>
                       {/* Capped and ellipsised rather than shown in full: an
                           address is here to tell two same-named patients apart,
                           and at full width it was the widest thing in the table
@@ -678,6 +814,45 @@ export default function AdminAppointments() {
           </>
         )}
       </Card>
+
+      {/* One day's book, opened from a calendar cell. Read-only on purpose:
+          the actions live on the table row, and duplicating them here would
+          mean two places to keep the transition rules honest. */}
+      <Modal
+        open={dayKey !== null}
+        title={dayKey ? formatDate(dayKey) : 'Day'}
+        onClose={() => setDayKey(null)}
+        size="sm"
+        footer={<Button onClick={() => setDayKey(null)}>Close</Button>}
+      >
+        {dayList.length === 0 ? (
+          <p className="text-sm text-slate-600">Nothing booked on this day.</p>
+        ) : (
+          <ul className="-my-1 divide-y divide-slate-100">
+            {dayList.map((a) => (
+              <li key={a.id} className="flex items-center gap-3 py-2.5">
+                <span className="w-20 flex-none text-sm font-semibold tabular-nums text-slate-900">
+                  {formatTime(a.appt_time)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <Link
+                    to={`/admin/patients/${a.patient_id}`}
+                    onClick={() => setDayKey(null)}
+                    className="block truncate text-sm font-semibold text-slate-900 underline-offset-2 hover:text-accent-700 hover:underline"
+                  >
+                    {a.patient_name}
+                  </Link>
+                  <span className="block truncate text-xs text-slate-500">
+                    {a.doctor_name}
+                    {a.location_name ? ` · ${a.location_name}` : ''}
+                  </span>
+                </span>
+                <StatusBadge status={a.status} variant="staff" />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
 
       <ReasonModal
         open={!!reasonTarget}

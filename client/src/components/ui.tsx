@@ -799,11 +799,19 @@ export function Avatar({
 }: {
   name: string | null | undefined;
   src?: string | null;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const box = size === 'sm' ? 'h-8 w-8 text-xs' : size === 'lg' ? 'h-20 w-20 text-xl' : 'h-11 w-11 text-sm';
+  // `xl` is the physician's own profile page, where the portrait is the subject
+  // of the header rather than a marker beside a name.
+  const BOX = {
+    sm: 'h-8 w-8 text-xs',
+    md: 'h-11 w-11 text-sm',
+    lg: 'h-20 w-20 text-xl',
+    xl: 'h-24 w-24 text-2xl sm:h-28 sm:w-28 sm:text-3xl',
+  } as const;
+  const box = BOX[size];
 
   if (src && !failed) {
     return (

@@ -1061,6 +1061,61 @@ export function adminDoctorDetail(id: number | string): Promise<DoctorDetail> {
   return api<DoctorDetail>(`/admin/doctors/${id}/detail`);
 }
 
+/**
+ * The scheduling view of a patient: who they are, and every visit on their book.
+ *
+ * There is no clinical half to this shape on purpose — visit notes and
+ * prescriptions are absent from the server's response, not merely unread here,
+ * because an administrator schedules care and scheduling does not require
+ * reading a chart.
+ */
+export interface AdminPatientAppointment {
+  id: number;
+  appt_date: string;
+  appt_time: string;
+  status: ApptStatus;
+  reason: string | null;
+  cancel_reason: string | null;
+  cancelled_by: string | null;
+  reschedule_required: boolean;
+  doctor_id: number;
+  doctor_name: string;
+  specialty_name: string | null;
+  location_name: string | null;
+}
+
+export interface AdminPatientDetail {
+  patient: {
+    id: number;
+    user_id: number;
+    full_name: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone: string | null;
+    date_of_birth: string | null;
+    gender: Gender | null;
+    address: string | null;
+    insurance_provider: string | null;
+    created_at: string;
+    notify_email: boolean;
+    notify_sms: boolean;
+  };
+  appointments: AdminPatientAppointment[];
+  counts: {
+    total: number;
+    pending: number;
+    confirmed: number;
+    completed: number;
+    cancelled: number;
+    no_show: number;
+  };
+}
+
+export function adminPatientDetail(id: number | string): Promise<AdminPatientDetail> {
+  return api<AdminPatientDetail>(`/admin/patients/${id}`);
+}
+
 export interface DoctorBody {
   prefix: string;
   first_name: string;
