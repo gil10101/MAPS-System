@@ -90,9 +90,18 @@ export default function MonthGrid({
       {/* Seven columns cannot fit a phone at a legible size, so the grid keeps a
           floor width and scrolls inside this box. That box owns the sideways
           overflow because `html` is overflow-x: hidden — anything that escapes
-          it is not scrolled to, it is silently sheared off. */}
+          it is not scrolled to, it is silently sheared off.
+
+          The floor is 7rem a column, matching the physician's own week and
+          month grids. Narrower and a chip cannot hold a time and a name at
+          once, which is the whole of what a cell is read for: at 34rem the
+          chips truncated to "9:00 A…" and the grid stopped saying anything.
+
+          Released at lg rather than sm: between md and lg the sidebar takes
+          15.5rem out of the viewport, so a tablet has *less* room for the grid
+          than a large phone does. */}
       <div className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
-        <div className="min-w-[34rem] lg:min-w-0">
+        <div className="min-w-[49rem] lg:min-w-0">
           <div className="grid grid-cols-7 gap-px">
             {[1, 2, 3, 4, 5, 6, 0].map((i) => (
               <div
