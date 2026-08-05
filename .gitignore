@@ -33,3 +33,8 @@ Thumbs.db
 # Source screenshots for the physician portraits. The cropped, optimised
 # versions committed under client/public/doctors are what the app serves.
 demo_doc_images/
+
+# Report build artifacts. The compiled PDF is the deliverable and is committed;
+# the Word source and the LaTeX project it is generated from are not.
+MediSync_CIS9590_Final_Report*.docx
+report/
