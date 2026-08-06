@@ -8,6 +8,47 @@ practice is measured on.
 
 > **CIS 9590 group project** — Liu Maggie · Lopez Raylene · Lu Gil · Mammadov Mehdi
 
+**[Live demo](https://maps-system-three.vercel.app/login)** · sign in with any of
+the seeded accounts below.
+
+---
+
+## Screenshots
+
+Three portals, one codebase. Each role sees only the screens its job needs.
+
+### Patients
+
+| Find a doctor | My appointments |
+|---|---|
+| ![Physician directory, filtered by name, specialty, or clinic site](docs/screenshots/patient-find-doctor.png) | ![A month of the patient's bookings, coloured by status](docs/screenshots/patient-calendar.png) |
+
+Search the directory by name, specialty, or the site you can actually travel
+to, then request one of the physician's open slots. Bookings arrive as requests
+and stay `Pending approval` until clinic staff confirm them.
+
+### Physicians
+
+![The physician's day, with each visit ready to be completed and noted](docs/screenshots/doctor-schedule.png)
+
+A physician sees their own book and nothing else — day, week, or month — and
+closes each visit out with a clinical note. Completing a visit is the one
+transition the system reserves to the treating provider.
+
+### Clinic administrators
+
+| Clinic overview | Approval queue |
+|---|---|
+| ![Appointment totals, no-show and cancellation rates, and utilization per physician](docs/screenshots/admin-overview.png) | ![Pending requests waiting on clinic staff, above the filterable book](docs/screenshots/admin-appointments.png) |
+
+![Weekly availability projected onto real dates, with blocked days removed](docs/screenshots/admin-availability.png)
+
+Availability is stored as a recurring weekly pattern rather than a table of
+slots. The calendar shows what that pattern produces on real dates and how many
+bookable slots each day yields — and blocking a physician out removes those days
+from patient search while flagging, rather than deleting, the bookings already
+inside the range.
+
 ---
 
 ## Tech stack
